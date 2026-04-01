@@ -3,9 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.05";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nixpkgs-stable }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = fn: nixpkgs.lib.genAttrs supportedSystems
@@ -27,10 +28,16 @@
       #       }
       #     ];
       #   };
-      nixosModules.default = import ./modules/nixos;
-      nixosModules.nyxorn  = self.nixosModules.default;
+      nixosModules.default = { pkgs, lib, ... }: {
+        imports = [ ./modules/nixos ];
+        # Always use the latest Ollama from nixos-unstable so new models work.
+        # Users can still override: services.aiAgent.ollama.package = pkgs.ollama-rocm;
+        services.aiAgent.ollama.package = lib.mkDefault
+          nixpkgs.legacyPackages.${pkgs.system}.ollama;
+      };
+      nixosModules.nyxorn = self.nixosModules.default;
 
-      # ── checks / dev shell (optional) ────────────────────────────────────────
+      # ── dev shell ─────────────────────────────────────────────────────────────
       devShells = forEachSystem (_system: pkgs: {
         default = pkgs.mkShell {
           packages = [ pkgs.nixd pkgs.nil ];

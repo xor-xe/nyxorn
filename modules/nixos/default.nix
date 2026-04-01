@@ -163,6 +163,17 @@ in
       '';
     };
 
+    ollama.package = mkOption {
+      type = types.package;
+      default = ollamaPackage;
+      defaultText = "pkgs.ollama (or rocm/cuda variant based on gpuAcceleration)";
+      description = ''
+        Ollama package to use. Override with a newer version from nixpkgs-unstable if
+        your models require a newer Ollama release:
+          services.aiAgent.ollama.package = pkgsUnstable.ollama;
+      '';
+    };
+
     enableSearxng = mkOption {
       type = types.bool;
       default = false;
@@ -200,7 +211,7 @@ in
 
     services.ollama = {
       enable = true;
-      package = ollamaPackage;
+      package = cfg.ollama.package;
     };
 
     systemd.services.openclaw = {
@@ -210,7 +221,7 @@ in
       wantedBy = [ "multi-user.target" ];
       unitConfig.StartLimitIntervalSec = 0;
 
-      path = with pkgs; [ bash coreutils gnugrep iproute2 ] ++ openclawTools ++ [ ollamaPackage ];
+      path = with pkgs; [ bash coreutils gnugrep iproute2 ] ++ openclawTools ++ [ cfg.ollama.package ];
 
       environment = {
         NPM_CONFIG_PREFIX = npmGlobalPrefix;
