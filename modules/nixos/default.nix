@@ -266,17 +266,19 @@ in
                 sleep 60
                 continue
               }
-            OC_DIR="${npmGlobalPrefix}/lib/node_modules/openclaw"
-            if [ -d "$OC_DIR" ]; then
-              echo "Building OpenClaw UI assets..." >&2
-              cd "$OC_DIR"
-              pnpm ui:build 2>&1 \
-                && echo "UI assets built successfully." >&2 \
-                || echo "UI build failed (non-fatal, continuing)..." >&2
-              cd "${nixagBotHome}"
-            fi
           else
             echo "OpenClaw found at: $(command -v openclaw)" >&2
+          fi
+
+          # Build UI assets if not already built (runs every restart, fast no-op if up to date).
+          OC_DIR="${npmGlobalPrefix}/lib/node_modules/openclaw"
+          if [ -d "$OC_DIR" ] && [ ! -d "$OC_DIR/assets/app" ]; then
+            echo "Building OpenClaw UI assets..." >&2
+            cd "$OC_DIR"
+            pnpm ui:build 2>&1 \
+              && echo "UI assets built successfully." >&2 \
+              || echo "UI build failed (non-fatal, continuing)..." >&2
+            cd "${nixagBotHome}"
           fi
 
           ${concatMapStringsSep "\n" (model: ''
