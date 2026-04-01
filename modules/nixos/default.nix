@@ -88,7 +88,8 @@ in
     # ── shell aliases ─────────────────────────────────────────────────────────
 
     environment.shellAliases = {
-      nyxorn-configure = "sudo -u ${gw.user} env HOME=${gw.stateDir} ${gw.package}/bin/openclaw configure";
+      nyxorn-onboard   = "sudo -u ${gw.user} env HOME=${gw.stateDir} OPENCLAW_STATE_DIR=${gw.stateDir} OLLAMA_API_KEY=ollama-local OLLAMA_HOST=http://127.0.0.1:11434 ${gw.package}/bin/openclaw onboard";
+      nyxorn-configure = "sudo -u ${gw.user} env HOME=${gw.stateDir} OPENCLAW_STATE_DIR=${gw.stateDir} ${gw.package}/bin/openclaw configure";
       nyxorn-status    = "systemctl status ${gw.unitName} ollama";
       nyxorn-restart   = "sudo systemctl restart ${gw.unitName}";
       nyxorn-stop      = "sudo systemctl stop ${gw.unitName}";
