@@ -36,7 +36,7 @@ buildNpmPackage (finalAttrs: {
   postInstall = ''
     wrapProgram $out/bin/openclaw \
       --set OPENCLAW_NIX_MODE "1" \
-      --set-default OPENCLAW_STATE_DIR "$HOME/.openclaw"
+      --set-default OPENCLAW_STATE_DIR '$HOME/.openclaw'
   '';
 
   passthru.updateScript = nix-update-script { };
