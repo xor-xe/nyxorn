@@ -65,7 +65,7 @@ in
       group      = lib.mkDefault "nixorn-agent";
       stateDir   = lib.mkDefault "/var/lib/nixorn-agent";
       createUser = lib.mkDefault true;
-      environment.OLLAMA_HOST    = lib.mkDefault "http://127.0.0.1:11434";
+      environment.OLLAMA_HOST = lib.mkDefault "http://127.0.0.1:11434";
       # Required to opt-in to Ollama provider auto-discovery (any non-empty value works).
       environment.OLLAMA_API_KEY = lib.mkDefault "ollama-local";
     };
