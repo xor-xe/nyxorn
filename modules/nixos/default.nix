@@ -23,6 +23,7 @@ let
     curl
     python3
     nodejs
+    nodePackages.pnpm
     jq
   ];
 
@@ -265,6 +266,15 @@ in
                 sleep 60
                 continue
               }
+            OC_DIR="${npmGlobalPrefix}/lib/node_modules/openclaw"
+            if [ -d "$OC_DIR" ]; then
+              echo "Building OpenClaw UI assets..." >&2
+              cd "$OC_DIR"
+              pnpm ui:build 2>&1 \
+                && echo "UI assets built successfully." >&2 \
+                || echo "UI build failed (non-fatal, continuing)..." >&2
+              cd "${nixagBotHome}"
+            fi
           else
             echo "OpenClaw found at: $(command -v openclaw)" >&2
           fi
@@ -344,6 +354,10 @@ in
     };
 
     environment.systemPackages = openclawTools ++ [ nixagOcDebugScript ];
+
+    # Ensure /etc/zshrc is generated so environment.shellAliases reach zsh users too.
+    programs.zsh.enable = true;
+    programs.bash.enableCompletion = true;
 
     # environment.shellAliases works for bash, zsh, and fish
     environment.shellAliases = {
