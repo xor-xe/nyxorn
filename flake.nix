@@ -37,14 +37,18 @@
           # Our thin wrapper: Ollama, SearXNG, aliases, nyxorn-agent defaults.
           ./modules/nixos
         ];
-        # Apply the official overlay so pkgs.openclaw-gateway is resolvable.
-        nixpkgs.overlays = [ nix-openclaw.overlays.default ];
+        # Reference the pre-built package from nix-openclaw's own evaluation
+        # context (which uses its own nixpkgs with fetchPnpmDeps available).
+        # Do NOT use nixpkgs.overlays — that would re-evaluate the package
+        # through the host's nixpkgs (25.05) which lacks fetchPnpmDeps.
+        services.openclaw-gateway.package = lib.mkDefault
+          nix-openclaw.packages.${pkgs.system}.openclaw-gateway;
       };
 
       nixosModules.nyxorn = self.nixosModules.default;
 
       # ── packages (re-export for convenience) ─────────────────────────────────
-      packages = forEachSystem (system: pkgs: {
+      packages = forEachSystem (system: _pkgs: {
         openclaw         = nix-openclaw.packages.${system}.openclaw;
         openclaw-gateway = nix-openclaw.packages.${system}.openclaw-gateway;
         default          = nix-openclaw.packages.${system}.openclaw-gateway;
