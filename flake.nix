@@ -4,8 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Official OpenClaw Nix packaging — handles the derivation, deps, and updates.
+    # Do NOT follow our nixpkgs: nix-openclaw requires nixos-unstable for
+    # fetchPnpmDeps, which is not available in nixos-25.05.
     nix-openclaw.url = "github:openclaw/nix-openclaw";
-    nix-openclaw.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, nix-openclaw }:
