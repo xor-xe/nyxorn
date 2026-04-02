@@ -18,9 +18,9 @@ let
       ollamaPkgs.ollama-vulkan or ollamaPkgs.ollama
     else ollamaPkgs.ollama;
 
-  nixagBotHome = "/var/lib/nixag-bot";
-  openclawStateDir = "${nixagBotHome}/.openclaw";
-  npmGlobalPrefix = "${nixagBotHome}/.npm-global";
+  nyxornHome      = "/var/lib/nyxorn-agent";
+  openclawStateDir = "${nyxornHome}/.openclaw";
+  npmGlobalPrefix  = "${nyxornHome}/.npm-global";
 
   openclawTools = with pkgs; [
     git
@@ -43,12 +43,12 @@ let
     pkgs.writeShellScript "deploy-searxng-skill" ''
       mkdir -p "${openclawStateDir}/skills/searxng-web-search"
       cp -r ${searxngSkillStorePath}/* "${openclawStateDir}/skills/searxng-web-search/"
-      chown -R nixag-bot:nixag-bot "${openclawStateDir}/skills"
+      chown -R nyxorn-agent:nyxorn-agent "${openclawStateDir}/skills"
     ''
   else
     null;
 
-  nixagOcDebugScript = pkgs.writeShellScriptBin "nixag-oc-debug" ''
+  nyxornDebugScript = pkgs.writeShellScriptBin "nyxorn-debug" ''
     RESET='\033[0m'
     BOLD='\033[1m'
     GREEN='\033[0;32m'
@@ -84,10 +84,10 @@ let
     if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
       ok "Ollama API reachable"
       echo -e "\n  Loaded models:"
-      sudo -u nixag-bot env HOME=${nixagBotHome} ollama ps 2>/dev/null \
+      sudo -u nyxorn-agent env HOME=${nyxornHome} ollama ps 2>/dev/null \
         | sed 's/^/    /' || warn "Could not list loaded models"
       echo -e "\n  Available models:"
-      sudo -u nixag-bot env HOME=${nixagBotHome} ollama list 2>/dev/null \
+      sudo -u nyxorn-agent env HOME=${nyxornHome} ollama list 2>/dev/null \
         | sed 's/^/    /' || warn "Could not list models"
     else
       fail "Ollama API not reachable at http://localhost:11434"
@@ -99,7 +99,7 @@ let
       model=$(${pkgs.jq}/bin/jq -r '.model // "not set"' ${openclawStateDir}/openclaw.json 2>/dev/null)
       ok "Configured model: $model"
     else
-      fail "No config at ${openclawStateDir}/openclaw.json — run: nixag-oc configure"
+      fail "No config at ${openclawStateDir}/openclaw.json — run: nyxorn-onboard"
     fi
 
     oc_bin="${npmGlobalPrefix}/bin/openclaw"
@@ -112,18 +112,18 @@ let
 
     hdr "Recent Logs (openclaw)"
     echo -e "\n  --- stdout (last 10 lines) ---"
-    tail -n 10 /var/log/openclaw/openclaw.log 2>/dev/null | sed 's/^/  /' \
+    tail -n 10 /var/log/nyxorn/openclaw.log 2>/dev/null | sed 's/^/  /' \
       || warn "No stdout log yet"
     echo -e "\n  --- stderr (last 10 lines) ---"
-    tail -n 10 /var/log/openclaw/openclaw-error.log 2>/dev/null | sed 's/^/  /' \
+    tail -n 10 /var/log/nyxorn/openclaw-error.log 2>/dev/null | sed 's/^/  /' \
       || warn "No stderr log yet"
 
     hdr "Resource Usage"
     echo -e "\n  Memory:"
     free -h | sed 's/^/    /'
-    echo -e "\n  Disk (openclaw state):"
-    du -sh ${nixagBotHome} 2>/dev/null | sed 's/^/    /' || true
-    du -sh /var/log/openclaw 2>/dev/null | sed 's/^/    /' || true
+    echo -e "\n  Disk (nyxorn state):"
+    du -sh ${nyxornHome} 2>/dev/null | sed 's/^/    /' || true
+    du -sh /var/log/nyxorn 2>/dev/null | sed 's/^/    /' || true
     echo -e "\n  GPU (if AMD):"
     if command -v radeontop > /dev/null 2>&1; then
       timeout 2 radeontop -d - -l 1 2>/dev/null | tail -1 | sed 's/^/    /' \
@@ -202,16 +202,16 @@ in
   };
 
   config = mkIf cfg.enable {
-    users.users.nixag-bot = {
+    users.users.nyxorn-agent = {
       isSystemUser = true;
-      group = "nixag-bot";
-      home = nixagBotHome;
+      group = "nyxorn-agent";
+      home = nyxornHome;
       createHome = true;
-      description = "Service account for AI Agent (OpenClaw and Ollama)";
+      description = "Service account for Nyxorn AI Agent (OpenClaw and Ollama)";
       shell = "${pkgs.bash}/bin/bash";
     };
 
-    users.groups.nixag-bot = { };
+    users.groups.nyxorn-agent = { };
 
     services.ollama = {
       enable = true;
@@ -221,7 +221,7 @@ in
     };
 
     systemd.services.openclaw = {
-      description = "OpenClaw AI Assistant Gateway";
+      description = "Nyxorn — OpenClaw AI Assistant Gateway";
       after = [ "network.target" "ollama.service" ];
       wants = [ "ollama.service" ];
       wantedBy = [ "multi-user.target" ];
@@ -231,25 +231,25 @@ in
 
       environment = {
         NPM_CONFIG_PREFIX = npmGlobalPrefix;
-        HOME = nixagBotHome;
+        HOME = nyxornHome;
         OPENCLAW_STATE_DIR = openclawStateDir;
-        OPENCLAW_HOME = nixagBotHome;
+        OPENCLAW_HOME = nyxornHome;
         OPENCLAW_NIX_MODE = "1";
       };
 
       serviceConfig = {
         Type = "simple";
-        User = "nixag-bot";
-        Group = "nixag-bot";
-        WorkingDirectory = nixagBotHome;
-        StandardOutput = "append:/var/log/openclaw/openclaw.log";
-        StandardError = "append:/var/log/openclaw/openclaw-error.log";
+        User = "nyxorn-agent";
+        Group = "nyxorn-agent";
+        WorkingDirectory = nyxornHome;
+        StandardOutput = "append:/var/log/nyxorn/openclaw.log";
+        StandardError = "append:/var/log/nyxorn/openclaw-error.log";
         Restart = "on-failure";
         RestartSec = "15s";
         PrivateTmp = false;
         ProtectSystem = false;
         ProtectHome = false;
-        ReadWritePaths = [ nixagBotHome "/var/lib/ollama" "/var/log/openclaw" ];
+        ReadWritePaths = [ nyxornHome "/var/lib/ollama" "/var/log/nyxorn" ];
       } // (optionalAttrs (deploySearxngSkillScript != null) {
         ExecStartPre = [ "+${deploySearxngSkillScript}" ];
       });
@@ -259,10 +259,10 @@ in
       in ''
         export PATH="${npmGlobalPrefix}/bin:$PATH"
 
-        export HOME="${nixagBotHome}"
+        export HOME="${nyxornHome}"
         git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" 2>/dev/null || true
         git config --global url."https://github.com/".insteadOf "git@github.com:" 2>/dev/null || true
-        export GIT_CEILING_DIRECTORIES="${nixagBotHome}"
+        export GIT_CEILING_DIRECTORIES="${nyxornHome}"
 
         while true; do
 
@@ -275,7 +275,7 @@ in
           if ! command -v openclaw > /dev/null 2>&1; then
             echo "OpenClaw not found. Installing via npm into ${npmGlobalPrefix}..." >&2
             mkdir -p "${npmGlobalPrefix}"
-            cd "${nixagBotHome}"
+            cd "${nyxornHome}"
             npm install -g openclaw 2>&1 \
               && echo "OpenClaw installed successfully." >&2 \
               || {
@@ -287,7 +287,7 @@ in
             echo "OpenClaw found at: $(command -v openclaw)" >&2
           fi
 
-          # Build UI assets if not already built (runs every restart, fast no-op if up to date).
+          # Build UI assets if not already built.
           OC_DIR="${npmGlobalPrefix}/lib/node_modules/openclaw"
           if [ -d "$OC_DIR" ] && [ ! -d "$OC_DIR/assets/app" ]; then
             echo "Building OpenClaw UI assets..." >&2
@@ -295,7 +295,7 @@ in
             pnpm ui:build 2>&1 \
               && echo "UI assets built successfully." >&2 \
               || echo "UI build failed (non-fatal, continuing)..." >&2
-            cd "${nixagBotHome}"
+            cd "${nyxornHome}"
           fi
 
           ${concatMapStringsSep "\n" (model: ''
@@ -328,12 +328,9 @@ in
             echo "OpenClaw requires first-time interactive setup." >&2
             echo "Run this in a terminal to complete setup:" >&2
             echo "" >&2
-            echo "  sudo -u nixag-bot env PATH=${npmGlobalPrefix}/bin:\$PATH \\" >&2
-            echo "    OLLAMA_HOST=http://localhost:11434 \\" >&2
-            echo "    openclaw onboard ${modelFlag}" >&2
+            echo "  nyxorn-onboard" >&2
             echo "" >&2
-            echo "Or use: nixag-oc-onboard" >&2
-            echo "Then restart: sudo systemctl restart openclaw" >&2
+            echo "Then restart: nyxorn-restart" >&2
             echo "========================================" >&2
             sleep 30
           fi
@@ -343,10 +340,10 @@ in
     };
 
     systemd.tmpfiles.rules = [
-      "d /var/log/openclaw          0755 nixag-bot nixag-bot -"
-      "d ${openclawStateDir}        0755 nixag-bot nixag-bot -"
-      "d ${npmGlobalPrefix}         0755 nixag-bot nixag-bot -"
-      "d ${npmGlobalPrefix}/bin     0755 nixag-bot nixag-bot -"
+      "d /var/log/nyxorn             0755 nyxorn-agent nyxorn-agent -"
+      "d ${openclawStateDir}         0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}          0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}/bin      0755 nyxorn-agent nyxorn-agent -"
     ];
 
     services.searx = mkIf cfg.enableSearxng {
@@ -372,30 +369,28 @@ in
       };
     };
 
-    environment.systemPackages = openclawTools ++ [ nixagOcDebugScript ];
+    environment.systemPackages = openclawTools ++ [ nyxornDebugScript ];
 
-    # Ensure /etc/zshrc is generated so environment.shellAliases reach zsh users too.
     programs.zsh.enable = true;
     programs.bash.completion.enable = true;
 
-    # environment.shellAliases works for bash, zsh, and fish
     environment.shellAliases = {
-      nixag-oc          = "sudo -u nixag-bot env HOME=${nixagBotHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw";
-      nixag-oc-onboard  = "sudo -u nixag-bot env HOME=${nixagBotHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw onboard";
-      nixag-oc-debug    = "sudo nixag-oc-debug";
-      nixag-oc-logs     = "sudo tail -f /var/log/openclaw/openclaw.log";
-      nixag-oc-errors   = "sudo tail -f /var/log/openclaw/openclaw-error.log";
-      nixag-oc-journal  = "sudo journalctl -u ollama -u openclaw -f";
-      nixag-oc-restart  = "sudo systemctl restart openclaw";
-      nixag-oc-stop     = "sudo systemctl stop openclaw";
-      nixag-oc-start    = "sudo systemctl start openclaw";
-      nixag-oc-status   = "systemctl status ollama openclaw";
+      nyxorn          = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw";
+      nyxorn-onboard  = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw onboard";
+      nyxorn-debug    = "sudo nyxorn-debug";
+      nyxorn-logs     = "sudo tail -f /var/log/nyxorn/openclaw.log";
+      nyxorn-errors   = "sudo tail -f /var/log/nyxorn/openclaw-error.log";
+      nyxorn-journal  = "sudo journalctl -u ollama -u openclaw -f";
+      nyxorn-restart  = "sudo systemctl restart openclaw";
+      nyxorn-stop     = "sudo systemctl stop openclaw";
+      nyxorn-start    = "sudo systemctl start openclaw";
+      nyxorn-status   = "systemctl status ollama openclaw";
     };
 
     services.logrotate = {
       enable = true;
       settings = {
-        "/var/log/openclaw/openclaw.log" = {
+        "/var/log/nyxorn/openclaw.log" = {
           frequency  = "daily";
           rotate     = 7;
           compress   = true;
@@ -404,7 +399,7 @@ in
           size       = "50M";
           copytruncate = true;
         };
-        "/var/log/openclaw/openclaw-error.log" = {
+        "/var/log/nyxorn/openclaw-error.log" = {
           frequency  = "daily";
           rotate     = 7;
           compress   = true;
