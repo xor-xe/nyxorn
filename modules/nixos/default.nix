@@ -216,6 +216,8 @@ in
     services.ollama = {
       enable = true;
       package = cfg.ollama.package;
+      acceleration = lib.mkIf (cfg.gpuAcceleration != "auto" && cfg.gpuAcceleration != "cpu")
+        cfg.gpuAcceleration;
     };
 
     systemd.services.openclaw = {
