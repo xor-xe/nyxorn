@@ -32,7 +32,11 @@
         imports = [ ./modules/nixos ];
         # Pass unstable pkgs into the module so it can pick the latest Ollama
         # variants (ollama, ollama-cuda, ollama-rocm) based on gpuAcceleration.
-        _module.args.unstablePkgs = nixpkgs.legacyPackages.${pkgs.system};
+        # allowUnfree is required for ollama-cuda (CUDA EULA).
+        _module.args.unstablePkgs = import nixpkgs {
+          system = pkgs.system;
+          config.allowUnfree = true;
+        };
       };
       nixosModules.nyxorn = self.nixosModules.default;
 

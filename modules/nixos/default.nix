@@ -374,7 +374,7 @@ in
 
     # Ensure /etc/zshrc is generated so environment.shellAliases reach zsh users too.
     programs.zsh.enable = true;
-    programs.bash.enableCompletion = true;
+    programs.bash.completion.enable = true;
 
     # environment.shellAliases works for bash, zsh, and fish
     environment.shellAliases = {
