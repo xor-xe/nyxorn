@@ -28,12 +28,11 @@
       #       }
       #     ];
       #   };
-      nixosModules.default = { pkgs, lib, ... }: {
+      nixosModules.default = { pkgs, ... }: {
         imports = [ ./modules/nixos ];
-        # Always use the latest Ollama from nixos-unstable so new models work.
-        # Users can still override: services.aiAgent.ollama.package = pkgs.ollama-rocm;
-        services.aiAgent.ollama.package = lib.mkDefault
-          nixpkgs.legacyPackages.${pkgs.system}.ollama;
+        # Pass unstable pkgs into the module so it can pick the latest Ollama
+        # variants (ollama, ollama-cuda, ollama-rocm) based on gpuAcceleration.
+        _module.args.unstablePkgs = nixpkgs.legacyPackages.${pkgs.system};
       };
       nixosModules.nyxorn = self.nixosModules.default;
 

@@ -1,18 +1,22 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, unstablePkgs ? pkgs, ... }:
 
 with lib;
 
 let
   cfg = config.services.aiAgent;
 
+  # Use unstablePkgs (passed from the nyxorn flake) so we always get the latest
+  # Ollama release. Falls back to host pkgs if unstablePkgs is not provided.
+  ollamaPkgs = unstablePkgs;
+
   ollamaPackage =
     if cfg.gpuAcceleration == "cuda" then
-      pkgs.ollama-cuda or pkgs.ollama
+      ollamaPkgs.ollama-cuda or ollamaPkgs.ollama
     else if cfg.gpuAcceleration == "rocm" then
-      pkgs.ollama-rocm or pkgs.ollama
+      ollamaPkgs.ollama-rocm or ollamaPkgs.ollama
     else if cfg.gpuAcceleration == "vulkan" then
-      pkgs.ollama-vulkan or pkgs.ollama
-    else pkgs.ollama;
+      ollamaPkgs.ollama-vulkan or ollamaPkgs.ollama
+    else ollamaPkgs.ollama;
 
   nixagBotHome = "/var/lib/nixag-bot";
   openclawStateDir = "${nixagBotHome}/.openclaw";
