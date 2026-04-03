@@ -352,7 +352,7 @@ in
         server = {
           port = 8888;
           bind_address = "127.0.0.1";
-          secret_key = "change-me-to-a-random-string";
+          secret_key = lib.mkDefault "change-me-to-a-random-string";
         };
         search = {
           safe_search = 0;
