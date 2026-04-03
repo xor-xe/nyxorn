@@ -25,6 +25,7 @@ let
   openclawTools = with pkgs; [
     git
     curl
+    unzip
     python3
     nodejs
     nodePackages.pnpm
@@ -180,6 +181,19 @@ in
         Override if you run SearXNG on a different host or port.
       '';
     };
+
+    clawhubSkills = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "ivangdavila/self-improving" "someone/some-skill" ];
+      description = ''
+        List of ClawHub skill slugs to install automatically.
+        Each entry is "<author>/<skill-name>" as shown in the ClawHub URL.
+        Skills are downloaded and extracted into the OpenClaw skills directory
+        on service start if not already present.
+        Browse skills at https://clawhub.ai
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -284,6 +298,26 @@ in
               ollama pull ${model} 2>&1 || true
             fi
           '') cfg.prePullModels}
+
+          ${concatMapStringsSep "\n" (slug:
+            let skillName = builtins.baseNameOf slug; in ''
+            SKILL_DIR="${openclawStateDir}/skills/${skillName}"
+            if [ ! -d "$SKILL_DIR" ]; then
+              echo "Installing ClawHub skill: ${slug}..." >&2
+              mkdir -p "$SKILL_DIR"
+              TMP_ZIP=$(mktemp /tmp/skill-XXXXXX.zip)
+              if curl -fsSL "https://wry-manatee-359.convex.site/api/v1/download?slug=${skillName}" \
+                  -o "$TMP_ZIP" 2>&1; then
+                unzip -q "$TMP_ZIP" -d "$SKILL_DIR" 2>&1 \
+                  && echo "Skill ${slug} installed." >&2 \
+                  || echo "Failed to extract skill ${slug}." >&2
+              else
+                echo "Failed to download skill ${slug}." >&2
+                rm -rf "$SKILL_DIR"
+              fi
+              rm -f "$TMP_ZIP"
+            fi
+          '') cfg.clawhubSkills}
 
           if [ -f "${openclawStateDir}/openclaw.json" ]; then
             echo "OpenClaw configured. Starting gateway..." >&2
