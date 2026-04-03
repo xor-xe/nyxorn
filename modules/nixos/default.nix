@@ -31,23 +31,6 @@ let
     jq
   ];
 
-  searxngSkillStorePath = if cfg.enableSearxng && cfg.searxngSkillPath != null then
-    pkgs.runCommand "searxng-web-search-skill" {} ''
-      mkdir -p $out
-      cp -r ${cfg.searxngSkillPath}/* $out/
-    ''
-  else
-    null;
-
-  deploySearxngSkillScript = if searxngSkillStorePath != null then
-    pkgs.writeShellScript "deploy-searxng-skill" ''
-      mkdir -p "${openclawStateDir}/skills/searxng-web-search"
-      cp -r ${searxngSkillStorePath}/* "${openclawStateDir}/skills/searxng-web-search/"
-      chown -R nyxorn-agent:nyxorn-agent "${openclawStateDir}/skills"
-    ''
-  else
-    null;
-
   nyxornDebugScript = pkgs.writeShellScriptBin "nyxorn-debug" ''
     RESET='\033[0m'
     BOLD='\033[1m'
@@ -183,20 +166,18 @@ in
       default = false;
       description = ''
         Enable a local SearXNG instance for free, unlimited web search.
-        Once enabled, OpenClaw can use http://localhost:8888 as its search endpoint.
+        OpenClaw will automatically connect to it via SEARXNG_URL.
         No API key required.
       '';
     };
 
-    searxngSkillPath = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      example = "./.cursor/skills/searxng-web-search";
+    searxng.url = mkOption {
+      type = types.str;
+      default = "http://127.0.0.1:8888";
       description = ''
-        Path to the searxng-web-search skill directory.
-        When set and enableSearxng is true, it is deployed into the service user's OpenClaw skills directory.
-        If this repo is a flake input (e.g. `dotfiles`), set:
-        `searxngSkillPath = dotfiles + "/.cursor/skills/searxng-web-search";`
+        URL of the SearXNG instance for OpenClaw to use.
+        Defaults to the local instance started by enableSearxng.
+        Override if you run SearXNG on a different host or port.
       '';
     };
   };
@@ -235,6 +216,7 @@ in
         OPENCLAW_STATE_DIR = openclawStateDir;
         OPENCLAW_HOME = nyxornHome;
         OPENCLAW_NIX_MODE = "1";
+        SEARXNG_URL = lib.mkIf cfg.enableSearxng cfg.searxng.url;
       };
 
       serviceConfig = {
@@ -250,9 +232,7 @@ in
         ProtectSystem = false;
         ProtectHome = false;
         ReadWritePaths = [ nyxornHome "/var/lib/ollama" "/var/log/nyxorn" ];
-      } // (optionalAttrs (deploySearxngSkillScript != null) {
-        ExecStartPre = [ "+${deploySearxngSkillScript}" ];
-      });
+      };
 
       script = let
         modelFlag = if cfg.defaultModel != null then "--model ${cfg.defaultModel}" else "";
