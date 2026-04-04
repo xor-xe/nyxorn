@@ -281,16 +281,6 @@ in
             echo "OpenClaw found at: $(command -v openclaw)" >&2
           fi
 
-          # Build UI assets if not already built.
-          OC_DIR="${npmGlobalPrefix}/lib/node_modules/openclaw"
-          if [ -d "$OC_DIR" ] && [ ! -d "$OC_DIR/assets/app" ]; then
-            echo "Building OpenClaw UI assets..." >&2
-            cd "$OC_DIR"
-            pnpm ui:build 2>&1 \
-              && echo "UI assets built successfully." >&2 \
-              || echo "UI build failed (non-fatal, continuing)..." >&2
-            cd "${nyxornHome}"
-          fi
 
           ${concatMapStringsSep "\n" (model: ''
             if ! ollama list 2>/dev/null | grep -q "^${model}"; then
@@ -321,7 +311,7 @@ in
 
           if [ -f "${openclawStateDir}/openclaw.json" ]; then
             echo "OpenClaw configured. Starting gateway..." >&2
-            openclaw gateway 2>&1 || true
+            openclaw gateway 2>&1
 
             echo "Waiting for gateway to bind to port 18789..." >&2
             for i in $(seq 1 15); do

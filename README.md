@@ -17,7 +17,7 @@ A NixOS module that layers an AI agent stack on top of any existing NixOS config
 Add nyxorn as a flake input:
 
 ```nix
-inputs.nyxorn.url = "github:youruser/nyxorn";
+inputs.nyxorn.url = "github.com/xor-xe/nyxorn";
 ```
 
 Import the module and enable it:
