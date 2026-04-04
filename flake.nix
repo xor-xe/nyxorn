@@ -3,47 +3,33 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.05";
   };
 
-  outputs = { self, nixpkgs, nixpkgs-stable }:
+  outputs = { self, nixpkgs }:
     let
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-      forEachSystem = fn: nixpkgs.lib.genAttrs supportedSystems
-        (system: fn system nixpkgs.legacyPackages.${system});
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forEachSystem = nixpkgs.lib.genAttrs systems;
+
+      # Unstable pkgs per system with allowUnfree for ollama-cuda/rocm.
+      unstablePkgsFor = system: import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
     in
     {
-      # ── NixOS module ─────────────────────────────────────────────────────────
-      # Usage:
-      #
-      #   inputs.nyxorn.url = "github:youruser/nyxorn";
-      #
-      #   nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-      #     modules = [
-      #       nyxorn.nixosModules.default
-      #       {
-      #         services.aiAgent.enable = true;
-      #         # services.aiAgent.gpuAcceleration = "rocm";
-      #         # services.aiAgent.prePullModels = [ "llama3.2" ];
-      #       }
-      #     ];
-      #   };
       nixosModules.default = { pkgs, ... }: {
         imports = [ ./modules/nixos ];
-        # Pass unstable pkgs into the module so it can pick the latest Ollama
-        # variants (ollama, ollama-cuda, ollama-rocm) based on gpuAcceleration.
-        # allowUnfree is required for ollama-cuda (CUDA EULA).
-        _module.args.unstablePkgs = import nixpkgs {
-          system = pkgs.system;
-          config.allowUnfree = true;
-        };
+        # Provides latest Ollama variants (ollama-cuda, ollama-rocm, etc.)
+        # based on the gpuAcceleration option. allowUnfree needed for CUDA EULA.
+        _module.args.unstablePkgs = unstablePkgsFor pkgs.system;
       };
+
+      # Alias so users can reference either name.
       nixosModules.nyxorn = self.nixosModules.default;
 
-      # ── dev shell ─────────────────────────────────────────────────────────────
-      devShells = forEachSystem (_system: pkgs: {
-        default = pkgs.mkShell {
-          packages = [ pkgs.nixd pkgs.nil ];
+      devShells = forEachSystem (system: {
+        default = nixpkgs.legacyPackages.${system}.mkShell {
+          packages = with nixpkgs.legacyPackages.${system}; [ nixd nil nixpkgs-fmt ];
         };
       });
     };
