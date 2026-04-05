@@ -56,7 +56,8 @@ nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
 | `gpuAcceleration` | enum | `"cpu"` | GPU backend: `cpu`, `cuda`, `rocm`, `vulkan` |
 | `prePullModels` | list | `[]` | Ollama models to pre-pull on service start |
 | `defaultModel` | string | `null` | Default model passed to OpenClaw |
-| `ollama.package` | package | auto | Override the Ollama package (e.g. custom build) |
+| `ollama.channel` | enum | `"unstable"` | nixpkgs source for Ollama: `"unstable"` (safe, 1-3 days behind master) or `"master"` (bleeding edge, same-day Ollama updates) |
+| `ollama.package` | package | auto | Override the Ollama package entirely (advanced — normally set via `ollama.channel`) |
 | `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 |
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL passed to OpenClaw |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
@@ -88,15 +89,60 @@ Then run ``nyxorn dashboard`` and open it in your browser.
 | `nyxorn-debug` | Full diagnostic (services, ports, models, logs) |
 | `nyxorn <cmd>` | Run any OpenClaw command as `nyxorn-agent` |
 
-## Updating
+## Keeping Ollama up to date
 
-**Ollama** (gets latest from nixos-unstable):
+Nyxorn carries **two nixpkgs snapshots** and you choose which one Ollama is pulled from:
+
+| `ollama.channel` | Source | Lag behind releases |
+|---|---|---|
+| `"unstable"` (default) | `nixpkgs-unstable` | 1–3 days — well-tested, recommended for most |
+| `"master"` | `nixpkgs master` | Same day — bleeding edge, use for very new models |
+
+### Use bleeding-edge Ollama (e.g. for gemma4 or any newly released model)
+
+```nix
+services.aiAgent.ollama.channel = "master";
+```
+
+That's it. Rebuild and Ollama will come from nixpkgs master, which always has the
+latest packaged release.
+
+### Keep both snapshots current
+
+Both `nixpkgs` (unstable) and `nixpkgs-master` are updated together when you run:
+
 ```bash
-cd ~/dotfiles
+# In your system dotfiles repo
 nix flake update nyxorn
-sudo nixos-rebuild switch --flake .#nixos
+sudo nixos-rebuild switch --flake .#yourhost
 sudo systemctl restart ollama
 ```
+
+### Tie Ollama to your system's nixpkgs (optional)
+
+If you want Ollama to follow your system's nixpkgs instead of nyxorn's own snapshot,
+add this to your system `flake.nix`:
+
+```nix
+inputs.nyxorn = {
+  url = "github:xor-xe/nyxorn";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+### Automatic updates
+
+```nix
+system.autoUpgrade = {
+  enable = true;
+  flake = "github:youruser/your-dotfiles";
+  flags = [ "--update-input" "nixpkgs" "--update-input" "nyxorn" "--commit-lock-file" ];
+  dates = "04:00";
+  allowReboot = false;
+};
+```
+
+---
 
 **OpenClaw** (reinstalls latest from npm):
 ```bash
@@ -108,7 +154,7 @@ nyxorn-restart
 ```bash
 cd ~/dotfiles
 nix flake update nyxorn
-sudo nixos-rebuild switch --flake .#nixos
+sudo nixos-rebuild switch --flake .#yourhost
 ```
 
 ## State locations
