@@ -22,29 +22,25 @@ inputs.nyxorn.url = "github.com/xor-xe/nyxorn";
 
 Import the module and enable it:
 
+**With local Ollama** (default):
 ```nix
-nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-  modules = [
-    nyxorn.nixosModules.default
-    {
-      services.aiAgent.enable = true;
+services.aiAgent = {
+  enable = true;
+  gpuAcceleration = "cuda";          # "rocm" AMD · "vulkan" Intel Arc · "cpu" default
+  ollama.channel = "master";         # "unstable" default · "master" for same-day releases
+  prePullModels = [ "llama3.2" ];
+  clawhubSkills = [ "ivangdavila/self-improving" ];
+  enableSearxng = true;
+  searxng.secretKey = "<openssl rand -hex 32>";
+};
+```
 
-      # GPU acceleration: "cuda" (NVIDIA), "rocm" (AMD), "vulkan" (Intel Arc), "auto" (CPU)
-      services.aiAgent.gpuAcceleration = "cuda";
-
-      # Pre-pull Ollama models on service start
-      services.aiAgent.prePullModels = [ "llama3.2" ];
-
-      # Install ClawHub skills declaratively
-      services.aiAgent.clawhubSkills = [
-        "ivangdavila/self-improving"
-      ];
-
-      # Optional: local SearXNG for free web search
-      services.aiAgent.enableSearxng = true;
-      services.aiAgent.searxng.secretKey = "$(openssl rand -hex 32)";
-    }
-  ];
+**OpenClaw only** (no local Ollama — configure a remote/cloud backend via `nyxorn-onboard`):
+```nix
+services.aiAgent = {
+  enable = true;
+  ollama.enable = false;
+  clawhubSkills = [ "ivangdavila/self-improving" ];
 };
 ```
 
@@ -53,11 +49,12 @@ nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enable` | bool | `false` | Enable the nyxorn AI agent stack |
-| `gpuAcceleration` | enum | `"cpu"` | GPU backend: `cpu`, `cuda`, `rocm`, `vulkan` |
-| `prePullModels` | list | `[]` | Ollama models to pre-pull on service start |
+| `ollama.enable` | bool | `true` | Run a local Ollama instance. Set `false` to use OpenClaw only (remote/cloud backend) |
+| `ollama.channel` | enum | `"unstable"` | nixpkgs source for Ollama: `"unstable"` (safe, 1-3 days behind master) or `"master"` (bleeding edge, same-day updates). Has no effect when `ollama.enable = false` |
+| `ollama.package` | package | auto | Override the Ollama package (advanced). Has no effect when `ollama.enable = false` |
+| `gpuAcceleration` | enum | `"cpu"` | GPU backend: `cpu`, `cuda`, `rocm`, `vulkan`. Requires `ollama.enable = true` |
+| `prePullModels` | list | `[]` | Ollama models to pre-pull on service start. Requires `ollama.enable = true` |
 | `defaultModel` | string | `null` | Default model passed to OpenClaw |
-| `ollama.channel` | enum | `"unstable"` | nixpkgs source for Ollama: `"unstable"` (safe, 1-3 days behind master) or `"master"` (bleeding edge, same-day Ollama updates) |
-| `ollama.package` | package | auto | Override the Ollama package entirely (advanced — normally set via `ollama.channel`) |
 | `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 |
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL passed to OpenClaw |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |

@@ -50,7 +50,7 @@ let
     hdr()  { echo -e "\n''${BOLD}''${BLUE}══ $* ''${RESET}"; }
 
     hdr "Service Status"
-    for svc in ollama openclaw; do
+    for svc in ${optionalString cfg.ollama.enable "ollama"} openclaw; do
       state=$(systemctl is-active "$svc" 2>/dev/null)
       if [ "$state" = "active" ]; then
         ok "$svc: $state"
@@ -60,7 +60,7 @@ let
     done
 
     hdr "Port Check"
-    for port in 11434 18789 18791; do
+    for port in ${optionalString cfg.ollama.enable "11434"} 18789 18791; do
       if ss -tlnp 2>/dev/null | grep -q "$port"; then
         ok "port $port is open"
       else
@@ -68,6 +68,7 @@ let
       fi
     done
 
+    ${optionalString cfg.ollama.enable ''
     hdr "Ollama"
     if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
       ok "Ollama API reachable"
@@ -80,6 +81,7 @@ let
     else
       fail "Ollama API not reachable at http://localhost:11434"
     fi
+    ''}
 
     hdr "OpenClaw"
     if [ -f "${openclawStateDir}/openclaw.json" ]; then
@@ -126,7 +128,7 @@ let
 in
 {
   options.services.aiAgent = {
-    enable = mkEnableOption "AI Agent with OpenClaw and Ollama";
+    enable = mkEnableOption "AI Agent with OpenClaw (and optionally Ollama)";
 
     defaultModel = mkOption {
       type = types.nullOr types.str;
@@ -151,6 +153,21 @@ in
         - cuda: NVIDIA GPUs
         - rocm: AMD GPUs
         - vulkan: Intel Arc / other Vulkan-capable GPUs
+      '';
+    };
+
+    ollama.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Whether to run a local Ollama instance.
+
+        Set to false if you want OpenClaw only — for example when you plan to use
+        a remote Ollama server, a cloud LLM provider, or configure the backend
+        manually via nyxorn-onboard.
+
+        When false: the Ollama service is not started, no GPU acceleration is
+        configured, and prePullModels has no effect.
       '';
     };
 
@@ -236,6 +253,20 @@ in
           Set: services.aiAgent.searxng.secretKey = "$(openssl rand -hex 32)";
         '';
       }
+      {
+        assertion = cfg.ollama.enable || cfg.prePullModels == [];
+        message = ''
+          services.aiAgent.prePullModels requires services.aiAgent.ollama.enable = true.
+          Remove prePullModels or re-enable the local Ollama service.
+        '';
+      }
+      {
+        assertion = cfg.ollama.enable || cfg.gpuAcceleration == "cpu";
+        message = ''
+          services.aiAgent.gpuAcceleration requires services.aiAgent.ollama.enable = true.
+          GPU acceleration has no effect without a local Ollama instance.
+        '';
+      }
     ];
     users.users.nyxorn-agent = {
       isSystemUser = true;
@@ -248,7 +279,7 @@ in
 
     users.groups.nyxorn-agent = { };
 
-    services.ollama = {
+    services.ollama = mkIf cfg.ollama.enable {
       enable = true;
       package = cfg.ollama.package;
       acceleration = lib.mkIf (cfg.gpuAcceleration != "cpu") cfg.gpuAcceleration;
@@ -256,12 +287,13 @@ in
 
     systemd.services.openclaw = {
       description = "Nyxorn — OpenClaw AI Assistant Gateway";
-      after = [ "network.target" "ollama.service" ];
-      wants = [ "ollama.service" ];
+      after    = [ "network.target" ] ++ optional cfg.ollama.enable "ollama.service";
+      wants    = optional cfg.ollama.enable "ollama.service";
       wantedBy = [ "multi-user.target" ];
       unitConfig.StartLimitIntervalSec = 0;
 
-      path = with pkgs; [ bash coreutils gnugrep iproute2 ] ++ openclawTools ++ [ cfg.ollama.package ];
+      path = with pkgs; [ bash coreutils gnugrep iproute2 ] ++ openclawTools
+             ++ optional cfg.ollama.enable cfg.ollama.package;
 
       environment = {
         NPM_CONFIG_PREFIX = npmGlobalPrefix;
@@ -284,7 +316,8 @@ in
         PrivateTmp = false;
         ProtectSystem = false;
         ProtectHome = false;
-        ReadWritePaths = [ nyxornHome "/var/lib/ollama" "/var/log/nyxorn" ];
+        ReadWritePaths = [ nyxornHome "/var/log/nyxorn" ]
+                       ++ optional cfg.ollama.enable "/var/lib/ollama";
       };
 
       script = let
@@ -299,11 +332,13 @@ in
 
         while true; do
 
+          ${optionalString cfg.ollama.enable ''
           until ollama list > /dev/null 2>&1; do
             echo "Waiting for Ollama to become ready..." >&2
             sleep 3
           done
           echo "Ollama is ready." >&2
+          ''}
 
           if ! command -v openclaw > /dev/null 2>&1; then
             echo "OpenClaw not found. Installing via npm into ${npmGlobalPrefix}..." >&2
@@ -321,12 +356,12 @@ in
           fi
 
 
-          ${concatMapStringsSep "\n" (model: ''
+          ${optionalString cfg.ollama.enable (concatMapStringsSep "\n" (model: ''
             if ! ollama list 2>/dev/null | grep -q "^${model}"; then
               echo "Pre-pulling model: ${model}" >&2
               ollama pull ${model} 2>&1 || true
             fi
-          '') cfg.prePullModels}
+          '') cfg.prePullModels)}
 
           ${concatMapStringsSep "\n" (slug:
             let skillName = builtins.baseNameOf slug; in ''
@@ -423,11 +458,15 @@ in
       nyxorn-debug    = "sudo nyxorn-debug";
       nyxorn-logs     = "sudo tail -f /var/log/nyxorn/openclaw.log";
       nyxorn-errors   = "sudo tail -f /var/log/nyxorn/openclaw-error.log";
-      nyxorn-journal  = "sudo journalctl -u ollama -u openclaw -f";
+      nyxorn-journal  = if cfg.ollama.enable
+                        then "sudo journalctl -u ollama -u openclaw -f"
+                        else "sudo journalctl -u openclaw -f";
       nyxorn-restart  = "sudo systemctl restart openclaw";
       nyxorn-stop     = "sudo systemctl stop openclaw";
       nyxorn-start    = "sudo systemctl start openclaw";
-      nyxorn-status   = "systemctl status ollama openclaw";
+      nyxorn-status   = if cfg.ollama.enable
+                        then "systemctl status ollama openclaw"
+                        else "systemctl status openclaw";
     };
 
     services.logrotate = {
