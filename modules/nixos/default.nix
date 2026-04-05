@@ -195,8 +195,7 @@ in
     };
 
     searxng.url = mkOption {
-      type = types.  # Ollama release. Falls back to host pkgs if unstablePkgs is not provided.
-str;
+      type = types.str;
       default = "http://127.0.0.1:8888";
       description = ''
         URL of the SearXNG instance for OpenClaw to use.

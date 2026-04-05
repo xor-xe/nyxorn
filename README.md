@@ -130,18 +130,6 @@ inputs.nyxorn = {
 };
 ```
 
-### Automatic updates
-
-```nix
-system.autoUpgrade = {
-  enable = true;
-  flake = "github:youruser/your-dotfiles";
-  flags = [ "--update-input" "nixpkgs" "--update-input" "nyxorn" "--commit-lock-file" ];
-  dates = "04:00";
-  allowReboot = false;
-};
-```
-
 ---
 
 **OpenClaw** (reinstalls latest from npm):
