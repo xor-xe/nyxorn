@@ -42,7 +42,7 @@ nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
 
       # Optional: local SearXNG for free web search
       services.aiAgent.enableSearxng = true;
-      services.searx.settings.server.secret_key = "your-random-secret";
+      services.aiAgent.searxng.secretKey = "$(openssl rand -hex 32)";
     }
   ];
 };
@@ -53,24 +53,25 @@ nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enable` | bool | `false` | Enable the nyxorn AI agent stack |
-| `gpuAcceleration` | enum | `"auto"` | GPU backend: `auto`, `cuda`, `rocm`, `vulkan`, `cpu` |
+| `gpuAcceleration` | enum | `"cpu"` | GPU backend: `cpu`, `cuda`, `rocm`, `vulkan` |
 | `prePullModels` | list | `[]` | Ollama models to pre-pull on service start |
 | `defaultModel` | string | `null` | Default model passed to OpenClaw |
 | `ollama.package` | package | auto | Override the Ollama package (e.g. custom build) |
 | `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 |
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL passed to OpenClaw |
+| `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically |
 
 ## First-time setup
 
-After the first `nixos-rebuild switch`, run onboarding to configure Ollama as the provider:
+After the first `nixos-rebuild switch`, reboot and run onboarding to configure Ollama as the provider:
 
 ```bash
 nyxorn-onboard --skip-health
 nyxorn-restart
 ```
 
-Then open `http://localhost:18789` in your browser.
+Then run ``nyxorn dashboard`` and open it in your browser.
 
 ## Shell aliases
 

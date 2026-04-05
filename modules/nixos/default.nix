@@ -16,7 +16,7 @@ let
       ollamaPkgs.ollama-rocm or ollamaPkgs.ollama
     else if cfg.gpuAcceleration == "vulkan" then
       ollamaPkgs.ollama-vulkan or ollamaPkgs.ollama
-    else ollamaPkgs.ollama;
+    else ollamaPkgs.ollama-cpu or ollamaPkgs.ollama;
 
   nyxornHome      = "/var/lib/nyxorn-agent";
   openclawStateDir = "${nyxornHome}/.openclaw";
@@ -139,15 +139,14 @@ in
     };
 
     gpuAcceleration = mkOption {
-      type = types.enum [ "auto" "rocm" "cuda" "vulkan" "cpu" ];
-      default = "auto";
+      type = types.enum [ "cpu" "rocm" "cuda" "vulkan" ];
+      default = "cpu";
       description = ''
         GPU acceleration type:
-        - auto: Try to auto-detect (falls back to CPU if detection fails)
-        - rocm: AMD GPUs (ROCm)
-        - cuda: NVIDIA GPUs (CUDA)
-        - vulkan: Intel Arc GPUs or Vulkan-capable
-        - cpu: CPU-only fallback
+        - cpu: CPU only (default)
+        - cuda: NVIDIA GPUs
+        - rocm: AMD GPUs
+        - vulkan: Intel Arc / other Vulkan-capable GPUs
       '';
     };
 
@@ -182,6 +181,15 @@ in
       '';
     };
 
+    searxng.secretKey = mkOption {
+      type = types.str;
+      default = "";
+      description = ''
+        Secret key for the local SearXNG instance. Required when enableSearxng = true.
+        Generate one with: openssl rand -hex 32
+      '';
+    };
+
     clawhubSkills = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -197,6 +205,15 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = !cfg.enableSearxng || cfg.searxng.secretKey != "";
+        message = ''
+          services.aiAgent.enableSearxng = true requires a secret key.
+          Set: services.aiAgent.searxng.secretKey = "$(openssl rand -hex 32)";
+        '';
+      }
+    ];
     users.users.nyxorn-agent = {
       isSystemUser = true;
       group = "nyxorn-agent";
@@ -211,8 +228,7 @@ in
     services.ollama = {
       enable = true;
       package = cfg.ollama.package;
-      acceleration = lib.mkIf (cfg.gpuAcceleration != "auto" && cfg.gpuAcceleration != "cpu")
-        cfg.gpuAcceleration;
+      acceleration = lib.mkIf (cfg.gpuAcceleration != "cpu") cfg.gpuAcceleration;
     };
 
     systemd.services.openclaw = {
@@ -356,7 +372,7 @@ in
         server = {
           port = 8888;
           bind_address = "127.0.0.1";
-          secret_key = lib.mkDefault "change-me-to-a-random-string";
+          secret_key = cfg.searxng.secretKey;
         };
         search = {
           safe_search = 0;
