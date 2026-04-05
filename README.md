@@ -1,5 +1,7 @@
 # nyxorn
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A NixOS module that layers an AI agent stack on top of any existing NixOS configuration. It runs [OpenClaw](https://openclaw.ai) as an isolated service user (`nyxorn-agent`), backed by [Ollama](https://ollama.ai) for local LLM inference with optional GPU acceleration.
 
 ## What it does
