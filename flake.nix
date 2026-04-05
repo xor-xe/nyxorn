@@ -2,7 +2,11 @@
   description = "Nyxorn — AI agent layer for NixOS (OpenClaw + Ollama, isolated service user)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # nixpkgs-unstable tracks nixpkgs master more closely than nixos-unstable
+    # (typically several days ahead), which means new Ollama releases land here first.
+    # To keep with userssystem's nixpkgs instead, add to your flake:
+    #   inputs.nyxorn.inputs.nixpkgs.follows = "nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
   outputs = { self, nixpkgs }:
