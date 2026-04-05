@@ -1,13 +1,17 @@
-{ config, lib, pkgs, unstablePkgs ? pkgs, ... }:
+{ config, lib, pkgs, unstablePkgs ? pkgs, masterPkgs ? unstablePkgs, ... }:
 
 with lib;
 
 let
   cfg = config.services.aiAgent;
 
-  # Use unstablePkgs (passed from the nyxorn flake) so we always get the latest
-  # Ollama release. Falls back to host pkgs if unstablePkgs is not provided.
-  ollamaPkgs = unstablePkgs;
+  # Pick the nixpkgs snapshot based on the user's channel preference.
+  # "unstable" → nixpkgs-unstable (default, well-tested, 1-3 days behind master)
+  # "master"   → nixpkgs master   (bleeding edge, new Ollama releases land same day)
+  # Falls back to host pkgs if neither is injected by the flake wrapper.
+  ollamaPkgs =
+    if cfg.ollama.channel == "master" then masterPkgs
+    else unstablePkgs;
 
   ollamaPackage =
     if cfg.gpuAcceleration == "cuda" then
@@ -150,14 +154,33 @@ in
       '';
     };
 
+    ollama.channel = mkOption {
+      type = types.enum [ "unstable" "master" ];
+      default = "unstable";
+      description = ''
+        Which nixpkgs snapshot to pull Ollama from.
+
+        - "unstable" (default): nixpkgs-unstable — well-tested builds, typically
+          1-3 days behind nixpkgs master. Suitable for most users.
+
+        - "master": nixpkgs master — bleeding edge. New Ollama versions land here
+          the same day they are packaged, before the unstable channel catches up.
+          Use this when a newly released model (e.g. gemma4) requires a very
+          recent Ollama that has not yet propagated to nixpkgs-unstable.
+
+        Note: switching to "master" causes Nix to fetch a separate copy of nixpkgs
+        master on the next rebuild. Run `nix flake update` in your dotfiles repo
+        to ensure nyxorn's master snapshot is also up to date.
+      '';
+    };
+
     ollama.package = mkOption {
       type = types.package;
       default = ollamaPackage;
-      defaultText = "pkgs.ollama (or rocm/cuda variant based on gpuAcceleration)";
+      defaultText = "ollama / ollama-cuda / ollama-rocm depending on gpuAcceleration and ollama.channel";
       description = ''
-        Ollama package to use. Override with a newer version from nixpkgs-unstable if
-        your models require a newer Ollama release:
-          services.aiAgent.ollama.package = pkgsUnstable.ollama;
+        Ollama package to use. Normally derived automatically from gpuAcceleration
+        and ollama.channel. Override only if you need a custom build.
       '';
     };
 
@@ -172,7 +195,8 @@ in
     };
 
     searxng.url = mkOption {
-      type = types.str;
+      type = types.  # Ollama release. Falls back to host pkgs if unstablePkgs is not provided.
+str;
       default = "http://127.0.0.1:8888";
       description = ''
         URL of the SearXNG instance for OpenClaw to use.
