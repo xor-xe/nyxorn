@@ -803,11 +803,16 @@ in
 
     environment.shellAliases =
       let
-        ollamaEnv = "OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local";
+        ollamaEnv  = "OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local";
+        workspace  = "${nyxornHome}/workspace";
+
         openclawCmd = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH ${ollamaEnv} openclaw";
-        # Hermes' addToSystemPackages already exports HERMES_HOME; we just need
-        # to drop privileges to the nyxorn-agent service user.
-        hermesCmd   = "sudo -u nyxorn-agent env HOME=${nyxornHome} ${ollamaEnv} hermes";
+
+        # Hermes scans upward from $CWD looking for a git repo, so we need to
+        # land inside a directory the nyxorn-agent user can read before exec'ing
+        # the binary — otherwise it tries to stat /home/<you>/.git and crashes
+        # with EACCES. The bash -c trick lets us cd, then forward "$@" to hermes.
+        hermesCmd   = "sudo -u nyxorn-agent env HOME=${nyxornHome} ${ollamaEnv} bash -c 'cd ${workspace} 2>/dev/null || cd /tmp; exec hermes \"$@\"' nyxorn-cli";
 
         nyxornCmd        = if isHermes then hermesCmd else openclawCmd;
         onboardCmd       = if isHermes then "nyxorn-onboard-hermes" else "${openclawCmd} onboard";
