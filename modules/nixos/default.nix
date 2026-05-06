@@ -803,16 +803,21 @@ in
 
     environment.shellAliases =
       let
-        ollamaEnv  = "OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local";
+        # OpenClaw-only env (Hermes uses settings.model.base_url directly).
+        # OLLAMA_API_KEY in particular must NOT be set for the Hermes path:
+        # its presence biases Hermes' provider auto-detection toward the
+        # *ollama-cloud* provider (ollama.com/v1) instead of our local
+        # endpoint, and the local key value would then fail with HTTP 401.
+        openclawOllamaEnv = "OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local";
         workspace  = "${nyxornHome}/workspace";
 
-        openclawCmd = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH ${ollamaEnv} openclaw";
+        openclawCmd = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH ${openclawOllamaEnv} openclaw";
 
-        # Hermes scans upward from $CWD looking for a git repo, so we need to
-        # land inside a directory the nyxorn-agent user can read before exec'ing
+        # Hermes scans upward from $CWD looking for a git repo, so we land
+        # inside a directory the nyxorn-agent user can read before exec'ing
         # the binary — otherwise it tries to stat /home/<you>/.git and crashes
         # with EACCES. The bash -c trick lets us cd, then forward "$@" to hermes.
-        hermesCmd   = "sudo -u nyxorn-agent env HOME=${nyxornHome} ${ollamaEnv} bash -c 'cd ${workspace} 2>/dev/null || cd /tmp; exec hermes \"$@\"' nyxorn-cli";
+        hermesCmd   = "sudo -u nyxorn-agent env HOME=${nyxornHome} bash -c 'cd ${workspace} 2>/dev/null || cd /tmp; exec hermes \"$@\"' nyxorn-cli";
 
         nyxornCmd        = if isHermes then hermesCmd else openclawCmd;
         onboardCmd       = if isHermes then "nyxorn-onboard-hermes" else "${openclawCmd} onboard";
@@ -868,16 +873,28 @@ in
         userModel     = userSettings.model    or { };
         userTerminal  = userSettings.terminal or { };
 
-        hasModelBaseUrl = userModel    ? base_url;
-        hasModelDefault = userModel    ? default;
-        hasTerminalCwd  = userTerminal ? cwd;
+        hasModelBaseUrl  = userModel    ? base_url;
+        hasModelDefault  = userModel    ? default;
+        hasModelProvider = userModel    ? provider;
+        hasTerminalCwd   = userTerminal ? cwd;
 
         # Only inject keys the user didn't already set; recursiveUpdate then
         # merges the partial overrides onto userSettings without clobbering
         # anything user-defined.
+        #
+        # Important: for local Ollama via the OpenAI-compatible endpoint,
+        # we must also set provider = "custom". Without it, Hermes resolves
+        # bare model names (e.g. "llama3.2") against its built-in catalog
+        # and routes them to the *ollama-cloud* provider at ollama.com/v1,
+        # producing an HTTP 401. With provider = "custom", the OpenAI SDK
+        # talks directly to base_url. See
+        # https://hermes-agent.nousresearch.com/docs/integrations/providers
         autoModel =
           (optionalAttrs (cfg.ollama.enable && !hasModelBaseUrl) {
             base_url = "http://localhost:11434/v1";
+          }) //
+          (optionalAttrs (cfg.ollama.enable && !hasModelProvider && !hasModelBaseUrl) {
+            provider = "custom";
           }) //
           (optionalAttrs (cfg.defaultModel != null && !hasModelDefault) {
             default = cfg.defaultModel;
