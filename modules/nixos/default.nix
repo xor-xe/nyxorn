@@ -864,15 +864,17 @@ in
     # local-Ollama and SearXNG users get a working setup with zero config.
     services.hermes-agent = mkIf isHermes (
       let
-        userSettings = cfg.hermes.settings;
-        userModel    = userSettings.model or { };
+        userSettings  = cfg.hermes.settings;
+        userModel     = userSettings.model    or { };
+        userTerminal  = userSettings.terminal or { };
 
-        hasModelBaseUrl = userModel ? base_url;
-        hasModelDefault = userModel ? default;
+        hasModelBaseUrl = userModel    ? base_url;
+        hasModelDefault = userModel    ? default;
+        hasTerminalCwd  = userTerminal ? cwd;
 
         # Only inject keys the user didn't already set; recursiveUpdate then
-        # merges the partial { model = autoModel; } onto userSettings without
-        # clobbering anything user-defined.
+        # merges the partial overrides onto userSettings without clobbering
+        # anything user-defined.
         autoModel =
           (optionalAttrs (cfg.ollama.enable && !hasModelBaseUrl) {
             base_url = "http://localhost:11434/v1";
@@ -881,9 +883,23 @@ in
             default = cfg.defaultModel;
           });
 
+        # Pin the gateway/cron working directory to the agent's workspace.
+        # Without this, the messaging gateway defaults to "~" (= the agent's
+        # HOME = /var/lib/nyxorn-agent), which is fine, but Hermes scans
+        # upward for a git repo and may try to read paths the nyxorn-agent
+        # user can't access. Anchoring at workspace gives it a quiet, owned
+        # directory to run in. CLI launches still respect $CWD.
+        autoTerminal = optionalAttrs (!hasTerminalCwd) {
+          cwd = "${nyxornHome}/workspace";
+        };
+
+        autoOverrides =
+          (optionalAttrs (autoModel    != { }) { model    = autoModel;    }) //
+          (optionalAttrs (autoTerminal != { }) { terminal = autoTerminal; });
+
         mergedSettings =
-          if autoModel == { } then userSettings
-          else recursiveUpdate userSettings { model = autoModel; };
+          if autoOverrides == { } then userSettings
+          else recursiveUpdate userSettings autoOverrides;
 
         # Auto-injected non-secret env vars for the systemd service. Always
         # additive — user-supplied hermes.environment wins on conflicts.
