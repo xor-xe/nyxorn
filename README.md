@@ -119,6 +119,7 @@ All Hermes options are passthroughs onto upstream `services.hermes-agent`. They 
 | `hermes.documents` | attrs | `{}` | Files installed into the agent workspace (e.g. `USER.md`) |
 | `hermes.extraPlugins` | list | `[]` | Directory plugins symlinked into `$HERMES_HOME/plugins/` |
 | `hermes.extraPythonPackages` | list | `[]` | Entry-point plugin packages (added to PYTHONPATH) |
+| `hermes.skills` | attrs | `{}` | Skill bundles symlinked into `$HERMES_HOME/skills/<key>`. Keys are `<category>/<name>` paths; values point at a directory containing `SKILL.md`. Stale entries are cleaned up on rebuild |
 | `hermes.extraPackages` | list | `[]` | Extra system packages available to the agent |
 | `hermes.authFile` | path | `null` | OAuth credentials seed file |
 | `hermes.authFileForceOverwrite` | bool | `false` | Re-seed `auth.json` on every activation |
@@ -289,9 +290,17 @@ nyxorn-restart
 
 Browse skills at [clawhub.ai](https://clawhub.ai).
 
-## Installing plugins (Hermes)
+## Installing plugins and skills (Hermes)
 
-Plugins are declarative — add the package to `extraPlugins` (directory plugin) or `extraPythonPackages` (entry-point plugin), then `nixos-rebuild switch`.
+Hermes has three extension points; nyxorn exposes a declarative slot for each.
+
+| Kind | Option | What it ships |
+|---|---|---|
+| Directory plugin | `hermes.extraPlugins` | `plugin.yaml` + `__init__.py` Python package |
+| Entry-point plugin | `hermes.extraPythonPackages` | wheel-installable plugin via `hermes_agent.plugins` entry point |
+| Skill bundle | `hermes.skills` | `SKILL.md` + helper scripts that the agent loads on demand |
+
+### Plugin example
 
 ```nix
 services.aiAgent.hermes = {
@@ -307,9 +316,9 @@ services.aiAgent.hermes = {
 };
 ```
 
-### Web search via Sekurvia + local SearXNG
+### Web search via Sekurvia (skill) + local SearXNG
 
-Hermes has no built-in general web-search tool. Pair `enableSearxng = true` with [Sekurvia](https://github.com/xor-xe/Sekurvia) — a small directory plugin that exposes a single `web_search` tool reading the `SEARXNG_URL` nyxorn already injects:
+Hermes has no built-in general web-search tool. Pair `enableSearxng = true` with [Sekurvia](https://github.com/xor-xe/Sekurvia) — a SKILL.md bundle that wraps the `SEARXNG_URL` nyxorn already injects:
 
 ```nix
 services.aiAgent = {
@@ -319,18 +328,14 @@ services.aiAgent = {
   enableSearxng = true;
   searxng.secretKey = "<openssl rand -hex 32>";
 
-  hermes = {
-    extraPlugins = [
-      (pkgs.fetchFromGitHub {
-        owner = "xor-xe";
-        repo  = "Sekurvia";
-        rev   = "v0.1.0";
-        hash  = "sha256-...";
-      })
-    ];
-    settings.plugins.enabled = [ "sekurvia" ];
-  };
+  hermes.skills."research/searxng-search" =
+    (pkgs.fetchFromGitHub {
+      owner = "xor-xe";
+      repo  = "Sekurvia";
+      rev   = "main";          # or pin a tagged release
+      hash  = "sha256-...";
+    }) + "/searxng-search";
 };
 ```
 
-No MCP server, no `npx` cold-start, no extra env vars beyond `SEARXNG_URL` (set automatically by `enableSearxng`). See [Sekurvia's README](https://github.com/xor-xe/Sekurvia#configuration) for additional knobs (`SEKURVIA_*`).
+The skill auto-hides itself when Hermes' built-in `web_search` tool is enabled (via `fallback_for_toolsets: [web]`), so it stays out of the way for users who wire up a SaaS web tool. See [Sekurvia's README](https://github.com/xor-xe/Sekurvia#configuration) for the optional `SEKURVIA_*` knobs.

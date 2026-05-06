@@ -446,6 +446,33 @@ in
         '';
       };
 
+      skills = mkOption {
+        type = types.attrsOf (types.either types.path types.package);
+        default = { };
+        description = ''
+          Hermes skill bundles installed declaratively into
+          $HERMES_HOME/skills/. Keys are paths under skills/ (typically
+          "<category>/<skill-name>", matching the layout used by bundled
+          skills); values are paths or packages whose root is the SKILL.md
+          bundle (must contain a top-level SKILL.md).
+
+          Stale entries are removed automatically on each rebuild. Conflicts
+          with bundled skills of the same path will overwrite the bundled
+          symlink — choose unique paths or override deliberately.
+        '';
+        example = literalExpression ''
+          {
+            "research/searxng-search" =
+              (pkgs.fetchFromGitHub {
+                owner = "user";
+                repo  = "Sekurvia";
+                rev   = "main";
+                hash  = "sha256-...";
+              }) + "/searxng-search";
+          }
+        '';
+      };
+
       extraPythonPackages = mkOption {
         type = types.listOf types.package;
         default = [ ];
@@ -1017,5 +1044,47 @@ in
       after    = [ "nyxorn-prepull.service" ];
       wants    = [ "nyxorn-prepull.service" ];
     };
+
+    # Declarative Hermes skill bundles. Mirrors upstream's extraPlugins
+    # symlink approach but supports nested category paths under skills/
+    # (research/foo, devops/bar, …) and tracks managed entries via a
+    # state file so removals from config are cleaned up on rebuild.
+    system.activationScripts."nyxorn-hermes-skills" = mkIf isHermes (
+      lib.stringAfter [ "hermes-agent-setup" ] ''
+        skillsDir="${nyxornHome}/.hermes/skills"
+        stateFile="${nyxornHome}/.hermes/.nyxorn-skills.list"
+
+        mkdir -p "$skillsDir"
+        chown nyxorn-agent:nyxorn-agent "$skillsDir" 2>/dev/null || true
+
+        # Remove any symlinks managed by a previous activation that aren't
+        # in the current config.
+        if [ -f "$stateFile" ]; then
+          while IFS= read -r prevPath; do
+            [ -z "$prevPath" ] && continue
+            target="$skillsDir/$prevPath"
+            if [ -L "$target" ]; then
+              rm -f "$target"
+            fi
+          done < "$stateFile"
+        fi
+
+        ${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: source: ''
+          if [ ! -f "${source}/SKILL.md" ]; then
+            echo "ERROR: services.aiAgent.hermes.skills.\"${name}\" — no SKILL.md at ${source}" >&2
+            exit 1
+          fi
+          install -d -o nyxorn-agent -g nyxorn-agent -m 2770 "$(dirname "$skillsDir/${name}")"
+          ln -sfn "${source}" "$skillsDir/${name}"
+          chown -h nyxorn-agent:nyxorn-agent "$skillsDir/${name}"
+        '') cfg.hermes.skills)}
+
+        cat > "$stateFile" <<'NYXORN_SKILLS_LIST_EOF'
+${lib.concatStringsSep "\n" (lib.attrNames cfg.hermes.skills)}
+NYXORN_SKILLS_LIST_EOF
+        chown nyxorn-agent:nyxorn-agent "$stateFile" 2>/dev/null || true
+        chmod 0640 "$stateFile" 2>/dev/null || true
+      ''
+    );
   };
 }
