@@ -662,7 +662,10 @@ in
           sleep 3
         done
         ${concatMapStringsSep "\n" (model: ''
-          if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${model}\(:.*\)\?"; then
+          # ollama list prints "NAME ID SIZE MODIFIED" with the model name at
+          # column 1 (e.g. "llama3.2:latest"). A bare name in prePullModels
+          # implicitly maps to ":latest", so grep at start-of-line is enough.
+          if ! ollama list 2>/dev/null | grep -q "^${model}"; then
             echo "Pre-pulling model: ${model}" >&2
             ollama pull "${model}" 2>&1 || echo "Failed to pull ${model} (will retry on next boot)" >&2
           else
