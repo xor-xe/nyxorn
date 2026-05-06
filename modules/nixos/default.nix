@@ -631,10 +631,54 @@ in
       acceleration = lib.mkIf (cfg.gpuAcceleration != "cpu") cfg.gpuAcceleration;
     };
 
+    # Engine-agnostic model pre-pull. Runs once after Ollama is up and pulls
+    # any tags the user listed in services.aiAgent.prePullModels that aren't
+    # already on disk. Without this, prePullModels would only fire from the
+    # OpenClaw bootstrap loop, leaving Hermes users with HTTP 404s on first
+    # chat when their default model hasn't been fetched yet.
+    systemd.services.nyxorn-prepull = mkIf (cfg.ollama.enable && cfg.prePullModels != [ ]) {
+      description = "Nyxorn — pre-pull Ollama models";
+      after    = [ "ollama.service" "network-online.target" ];
+      wants    = [ "ollama.service" "network-online.target" ];
+      requires = [ "ollama.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      path = [ cfg.ollama.package pkgs.coreutils pkgs.gnugrep ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = "nyxorn-agent";
+        Group = "nyxorn-agent";
+        RemainAfterExit = true;
+        Environment = [
+          "HOME=${nyxornHome}"
+          "OLLAMA_HOST=http://127.0.0.1:11434"
+        ];
+      };
+
+      script = ''
+        until ollama list >/dev/null 2>&1; do
+          echo "Waiting for Ollama API..." >&2
+          sleep 3
+        done
+        ${concatMapStringsSep "\n" (model: ''
+          if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${model}\(:.*\)\?"; then
+            echo "Pre-pulling model: ${model}" >&2
+            ollama pull "${model}" 2>&1 || echo "Failed to pull ${model} (will retry on next boot)" >&2
+          else
+            echo "Model already present: ${model}" >&2
+          fi
+        '') cfg.prePullModels}
+      '';
+    };
+
     systemd.services.openclaw = mkIf isOpenclaw {
       description = "Nyxorn — OpenClaw AI Assistant Gateway";
-      after    = [ "network.target" ] ++ optional cfg.ollama.enable "ollama.service";
-      wants    = optional cfg.ollama.enable "ollama.service";
+      after    = [ "network.target" ]
+                 ++ optional cfg.ollama.enable "ollama.service"
+                 ++ optional (cfg.ollama.enable && cfg.prePullModels != [ ]) "nyxorn-prepull.service";
+      wants    = optional cfg.ollama.enable "ollama.service"
+                 ++ optional (cfg.ollama.enable && cfg.prePullModels != [ ]) "nyxorn-prepull.service";
       wantedBy = [ "multi-user.target" ];
       unitConfig.StartLimitIntervalSec = 0;
 
@@ -701,13 +745,6 @@ in
             echo "OpenClaw found at: $(command -v openclaw)" >&2
           fi
 
-
-          ${optionalString cfg.ollama.enable (concatMapStringsSep "\n" (model: ''
-            if ! ollama list 2>/dev/null | grep -q "^${model}"; then
-              echo "Pre-pulling model: ${model}" >&2
-              ollama pull ${model} 2>&1 || true
-            fi
-          '') cfg.prePullModels)}
 
           ${concatMapStringsSep "\n" (slug:
             let skillName = builtins.baseNameOf slug; in ''
@@ -963,5 +1000,13 @@ in
         };
       }
     );
+
+    # Order Hermes after the model pre-pull so first-chat doesn't 404 on a
+    # missing tag. Only adds a dependency when both engines and prePull are
+    # active — otherwise it's a no-op.
+    systemd.services.hermes-agent = mkIf (isHermes && cfg.ollama.enable && cfg.prePullModels != [ ]) {
+      after    = [ "nyxorn-prepull.service" ];
+      wants    = [ "nyxorn-prepull.service" ];
+    };
   };
 }
