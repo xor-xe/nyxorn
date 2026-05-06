@@ -11,7 +11,7 @@ A NixOS module that layers an AI agent stack on top of any existing NixOS config
 - Runs **one** of two agent engines per host (mutually exclusive):
   - **OpenClaw** (default) — npm-installed gateway on `http://localhost:18789`, ClawHub skill auto-install, interactive `openclaw onboard` setup
   - **Hermes** — declarative NousResearch agent module (settings, MCP servers, plugins, documents) with optional persistent Ubuntu container for self-modification
-- Optionally runs a local SearXNG instance for free web search (shared by either engine)
+- Optionally runs a local SearXNG instance and exposes it as `SEARXNG_URL` to the active engine — OpenClaw bridges it via ClawHub; Hermes consumes it through any plugin that reads `SEARXNG_URL` (e.g. [Sekurvia](https://github.com/xor-xe/Sekurvia))
 - Provides `nyxorn-*` shell aliases that auto-target the active engine
 
 ## Picking an engine
@@ -101,7 +101,7 @@ services.aiAgent = {
 | `prePullModels` | list | `[]` | Ollama models to pre-pull on service start. Requires `ollama.enable = true` |
 | `defaultModel` | string | `null` | Default model. For OpenClaw: passed via CLI. For Hermes: auto-injected as `settings.model.default` if user didn't set it |
 | `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 (shared by either engine) |
-| `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes |
+| `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes. For Hermes, a plugin that reads `SEARXNG_URL` (e.g. [Sekurvia](https://github.com/xor-xe/Sekurvia)) is required to actually use it |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
 
@@ -306,3 +306,31 @@ services.aiAgent.hermes = {
   settings.plugins.enabled = [ "hermes-lcm" ];
 };
 ```
+
+### Web search via Sekurvia + local SearXNG
+
+Hermes has no built-in general web-search tool. Pair `enableSearxng = true` with [Sekurvia](https://github.com/xor-xe/Sekurvia) — a small directory plugin that exposes a single `web_search` tool reading the `SEARXNG_URL` nyxorn already injects:
+
+```nix
+services.aiAgent = {
+  enable = true;
+  engine = "hermes";
+
+  enableSearxng = true;
+  searxng.secretKey = "<openssl rand -hex 32>";
+
+  hermes = {
+    extraPlugins = [
+      (pkgs.fetchFromGitHub {
+        owner = "xor-xe";
+        repo  = "Sekurvia";
+        rev   = "v0.1.0";
+        hash  = "sha256-...";
+      })
+    ];
+    settings.plugins.enabled = [ "sekurvia" ];
+  };
+};
+```
+
+No MCP server, no `npx` cold-start, no extra env vars beyond `SEARXNG_URL` (set automatically by `enableSearxng`). See [Sekurvia's README](https://github.com/xor-xe/Sekurvia#configuration) for additional knobs (`SEKURVIA_*`).

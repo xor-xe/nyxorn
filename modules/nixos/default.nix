@@ -823,9 +823,10 @@ in
           safe_search = 0;
           default_lang = "en";
           # SearXNG disables non-HTML output by default and returns 403 for
-          # ?format=json, which breaks every MCP/API client (mcp-searxng,
-          # OpenClaw, etc). Enable both so HTML browsing AND machine clients
-          # work against the same instance.
+          # ?format=json, which breaks every machine client (OpenClaw's
+          # ClawHub bridge, Sekurvia, MCP servers, plain curl, …). Enable
+          # both so HTML browsing AND machine clients work against the same
+          # instance.
           formats = [ "html" "json" ];
         };
         engines = [
@@ -970,24 +971,6 @@ in
         };
 
         mergedEnv = autoEnv // cfg.hermes.environment;
-
-        # Auto-wire the mcp-searxng MCP server when local SearXNG is on and
-        # the user hasn't supplied their own `searxng` MCP entry. Hermes has
-        # no built-in web-search skill, so without this `enableSearxng = true`
-        # is a no-op for Hermes (the OpenClaw bootstrap is what consumed
-        # SEARXNG_URL). The server pulls itself via `npx -y mcp-searxng` on
-        # first call (Node.js is on hermes' wrapped PATH) and reads the
-        # SEARXNG_URL we set in mergedEnv. To opt out, users can either
-        # set `services.aiAgent.enableSearxng = false`, or override with
-        # `services.aiAgent.hermes.mcpServers.searxng = { enabled = false; }`.
-        hasUserSearxngMcp = cfg.hermes.mcpServers ? searxng;
-        autoMcp = optionalAttrs (cfg.enableSearxng && !hasUserSearxngMcp) {
-          searxng = {
-            command = "npx";
-            args    = [ "-y" "mcp-searxng" ];
-          };
-        };
-        mergedMcp = autoMcp // cfg.hermes.mcpServers;
       in
       {
         enable = true;
@@ -1002,7 +985,7 @@ in
         addToSystemPackages    = cfg.hermes.addToSystemPackages;
         environmentFiles       = cfg.hermes.environmentFiles;
         environment            = mergedEnv;
-        mcpServers             = mergedMcp;
+        mcpServers             = cfg.hermes.mcpServers;
         documents              = cfg.hermes.documents;
         extraPlugins           = cfg.hermes.extraPlugins;
         extraPythonPackages    = cfg.hermes.extraPythonPackages;
