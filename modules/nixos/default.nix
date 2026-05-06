@@ -822,6 +822,11 @@ in
         search = {
           safe_search = 0;
           default_lang = "en";
+          # SearXNG disables non-HTML output by default and returns 403 for
+          # ?format=json, which breaks every MCP/API client (mcp-searxng,
+          # OpenClaw, etc). Enable both so HTML browsing AND machine clients
+          # work against the same instance.
+          formats = [ "html" "json" ];
         };
         engines = [
           { name = "google";     engine = "google";     shortcut = "g"; }
