@@ -1,5 +1,5 @@
 {
-  description = "Nyxorn — AI agent layer for NixOS (OpenClaw + Ollama, isolated service user)";
+  description = "Nyxorn — AI agent layer for NixOS (OpenClaw or Hermes + Ollama, isolated service user)";
 
   inputs = {
     # nixpkgs-unstable is the default Ollama source — well-tested, typically 1-3 days
@@ -14,9 +14,17 @@
       url = "github:NixOS/nixpkgs/master";
       flake = false;
     };
+
+    # Upstream Hermes Agent (NousResearch) — NixOS module is imported only when
+    # services.aiAgent.engine = "hermes". Follows our nixpkgs to avoid a second
+    # nixpkgs evaluation for OpenClaw users.
+    hermes-agent = {
+      url = "github:NousResearch/hermes-agent";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-master }:
+  outputs = { self, nixpkgs, nixpkgs-master, hermes-agent }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = nixpkgs.lib.genAttrs systems;
@@ -35,7 +43,16 @@
     in
     {
       nixosModules.default = { pkgs, ... }: {
-        imports = [ ./modules/nixos ];
+        imports = [
+          ./modules/nixos
+          # Upstream Hermes Agent module — only adds options unless
+          # services.hermes-agent.enable = true (set by our wrapper when
+          # services.aiAgent.engine = "hermes"), so OpenClaw users pay no
+          # closure cost.
+          hermes-agent.nixosModules.default
+        ];
+        # Make pkgs.hermes-agent available for the Hermes engine branch.
+        nixpkgs.overlays = [ hermes-agent.overlays.default ];
         _module.args.unstablePkgs = unstablePkgsFor pkgs.system;
         _module.args.masterPkgs   = masterPkgsFor   pkgs.system;
       };

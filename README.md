@@ -2,17 +2,24 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A NixOS module that layers an AI agent stack on top of any existing NixOS configuration. It runs [OpenClaw](https://openclaw.ai) as an isolated service user (`nyxorn-agent`), backed by [Ollama](https://ollama.ai) for local LLM inference with optional GPU acceleration.
+A NixOS module that layers an AI agent stack on top of any existing NixOS configuration. It runs your choice of agent engine — [OpenClaw](https://openclaw.ai) (default) or [Hermes Agent](https://github.com/NousResearch/hermes-agent) — as an isolated service user (`nyxorn-agent`), backed by [Ollama](https://ollama.ai) for local LLM inference with optional GPU acceleration.
 
 ## What it does
 
 - Creates a locked-down `nyxorn-agent` system user
 - Runs Ollama with automatic GPU support (CUDA, ROCm, Vulkan)
-- Installs and runs the latest OpenClaw gateway via npm
-- Exposes the OpenClaw UI at `http://localhost:18789`
-- Optionally runs a local SearXNG instance for free web search
-- Declaratively installs [ClawHub](https://clawhub.ai) skills
-- Provides `nyxorn-*` shell aliases for common operations
+- Runs **one** of two agent engines per host (mutually exclusive):
+  - **OpenClaw** (default) — npm-installed gateway on `http://localhost:18789`, ClawHub skill auto-install, interactive `openclaw onboard` setup
+  - **Hermes** — declarative NousResearch agent module (settings, MCP servers, plugins, documents) with optional persistent Ubuntu container for self-modification
+- Optionally runs a local SearXNG instance for free web search (shared by either engine)
+- Provides `nyxorn-*` shell aliases that auto-target the active engine
+
+## Picking an engine
+
+| Engine | Best for | Config style | Ships with |
+|---|---|---|---|
+| `openclaw` (default) | Plug-and-play UI, ClawHub skills, interactive setup | Imperative CLI (`openclaw onboard`) | OpenClaw npm gateway, port 18789 |
+| `hermes` | Declarative agent definition, MCP-first workflows, self-modifying agents | Pure Nix (`services.aiAgent.hermes.settings`) | Hermes Agent + uv2nix-built deps, optional Ubuntu container |
 
 ## Usage
 
@@ -46,23 +53,88 @@ services.aiAgent = {
 };
 ```
 
+**Hermes engine with local Ollama** (declarative, no interactive setup):
+```nix
+services.aiAgent = {
+  enable = true;
+  engine = "hermes";
+  gpuAcceleration = "cuda";
+  defaultModel = "llama3.2";              # auto-injected as model.default
+  hermes.settings = {
+    toolsets = [ "all" ];
+    memory.memory_enabled = true;
+  };
+  # Local Ollama wins by default. base_url is auto-set to
+  # http://localhost:11434/v1 when ollama.enable = true.
+};
+```
+
+**Hermes engine with a remote provider + persistent container**:
+```nix
+{ config, ... }: {
+  services.aiAgent = {
+    enable = true;
+    engine = "hermes";
+    ollama.enable = false;
+    hermes = {
+      settings.model.default = "anthropic/claude-sonnet-4";
+      environmentFiles = [ config.sops.secrets."hermes-env".path ];
+      container.enable = true;            # Ubuntu container, agent can apt/pip/npm install
+      container.hostUsers = [ "you" ];    # share ~/.hermes with your shell
+    };
+  };
+}
+```
+
 ## Options
+
+### Core
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enable` | bool | `false` | Enable the nyxorn AI agent stack |
-| `ollama.enable` | bool | `true` | Run a local Ollama instance. Set `false` to use OpenClaw only (remote/cloud backend) |
+| `engine` | enum | `"openclaw"` | Which agent engine to run: `"openclaw"` or `"hermes"`. Engines are mutually exclusive per host |
+| `ollama.enable` | bool | `true` | Run a local Ollama instance. Set `false` to point the engine at a remote/cloud backend |
 | `ollama.channel` | enum | `"unstable"` | nixpkgs source for Ollama: `"unstable"` (safe, 1-3 days behind master) or `"master"` (bleeding edge, same-day updates). Has no effect when `ollama.enable = false` |
 | `ollama.package` | package | auto | Override the Ollama package (advanced). Has no effect when `ollama.enable = false` |
 | `gpuAcceleration` | enum | `"cpu"` | GPU backend: `cpu`, `cuda`, `rocm`, `vulkan`. Requires `ollama.enable = true` |
 | `prePullModels` | list | `[]` | Ollama models to pre-pull on service start. Requires `ollama.enable = true` |
-| `defaultModel` | string | `null` | Default model passed to OpenClaw |
-| `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 |
-| `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL passed to OpenClaw |
+| `defaultModel` | string | `null` | Default model. For OpenClaw: passed via CLI. For Hermes: auto-injected as `settings.model.default` if user didn't set it |
+| `enableSearxng` | bool | `false` | Run a local SearXNG instance on port 8888 (shared by either engine) |
+| `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
-| `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically |
+| `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
+
+### Hermes engine (`services.aiAgent.hermes.*`)
+
+All Hermes options are passthroughs onto upstream `services.hermes-agent`. They take effect only when `engine = "hermes"`.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `hermes.settings` | attrs | `{}` | Declarative `config.yaml`. Deep-merged with auto-injected defaults (Ollama base_url, defaultModel) |
+| `hermes.configFile` | path | `null` | Escape hatch — replaces `settings` entirely with a hand-written file |
+| `hermes.environmentFiles` | list of paths | `[]` | Files containing API keys / secrets. Use sops-nix or agenix |
+| `hermes.environment` | attrs of str | `{}` | Non-secret env vars (visible in /nix/store) |
+| `hermes.mcpServers` | attrs | `{}` | MCP server definitions (stdio or HTTP) |
+| `hermes.documents` | attrs | `{}` | Files installed into the agent workspace (e.g. `USER.md`) |
+| `hermes.extraPlugins` | list | `[]` | Directory plugins symlinked into `$HERMES_HOME/plugins/` |
+| `hermes.extraPythonPackages` | list | `[]` | Entry-point plugin packages (added to PYTHONPATH) |
+| `hermes.extraPackages` | list | `[]` | Extra system packages available to the agent |
+| `hermes.authFile` | path | `null` | OAuth credentials seed file |
+| `hermes.authFileForceOverwrite` | bool | `false` | Re-seed `auth.json` on every activation |
+| `hermes.addToSystemPackages` | bool | `true` | Add `hermes` CLI to system PATH and set `HERMES_HOME` system-wide |
+| `hermes.extraArgs` | list | `[]` | Extra args appended to `hermes gateway` |
+| `hermes.restart` / `hermes.restartSec` | str / int | `"always"` / `5` | systemd restart policy |
+| `hermes.container.enable` | bool | `false` | Run Hermes in a persistent Ubuntu container (lets the agent `apt`/`pip`/`npm install`) |
+| `hermes.container.backend` | enum | `"docker"` | `"docker"` or `"podman"` |
+| `hermes.container.image` | string | `"ubuntu:24.04"` | Base OCI image |
+| `hermes.container.extraVolumes` | list | `[]` | Extra volume mounts (`host:container[:mode]`) |
+| `hermes.container.extraOptions` | list | `[]` | Extra args to `docker create` (e.g. `[ "--gpus" "all" ]`) |
+| `hermes.container.hostUsers` | list | `[]` | Users who get a `~/.hermes` symlink and join the `nyxorn-agent` group |
 
 ## First-time setup
+
+### OpenClaw (default engine)
 
 After the first `nixos-rebuild switch`, reboot and run onboarding to configure Ollama as the provider:
 
@@ -71,22 +143,64 @@ nyxorn-onboard --skip-health
 nyxorn-restart
 ```
 
-Then run ``nyxorn dashboard`` and open it in your browser.
+Then run `nyxorn dashboard` and open it in your browser.
+
+### Hermes engine
+
+No interactive setup. Hermes runs in **managed mode** — `hermes setup` and `hermes config edit` are intentionally blocked because the configuration is generated from your NixOS config. After `nixos-rebuild switch`:
+
+```bash
+systemctl status hermes-agent          # or: nyxorn-status
+journalctl -u hermes-agent -f          # or: nyxorn-logs
+hermes version                          # if hermes.addToSystemPackages = true (default)
+```
+
+If you forget how to configure Hermes from a fresh shell, run `nyxorn-onboard` — it prints a short pointer to the relevant Nix options.
+
+## Secrets (Hermes only)
+
+Hermes needs a provider key whenever it isn't talking to local Ollama. Keys must come from a file outside `/nix/store`. Recommended setups:
+
+- **[sops-nix](https://github.com/Mic92/sops-nix)** — encrypted YAML/JSON committed to the repo, decrypted at activation.
+- **[agenix](https://github.com/ryantm/agenix)** — age-encrypted files, similar workflow.
+
+Wire them into the agent via:
+
+```nix
+services.aiAgent.hermes.environmentFiles = [
+  config.sops.secrets."hermes-env".path
+];
+```
+
+Where the secret payload contains lines like `OPENROUTER_API_KEY=sk-or-...` and `ANTHROPIC_API_KEY=sk-ant-...`.
+
+A bare-minimum bootstrap (not for production) is a 0600 plain file:
+
+```bash
+echo "OPENROUTER_API_KEY=sk-or-your-key" \
+  | sudo install -m 0600 -o nyxorn-agent /dev/stdin /var/lib/nyxorn-agent/hermes-env
+```
+
+```nix
+services.aiAgent.hermes.environmentFiles = [ "/var/lib/nyxorn-agent/hermes-env" ];
+```
 
 ## Shell aliases
 
+All `nyxorn-*` aliases auto-target the active engine (OpenClaw or Hermes).
+
 | Alias | Description |
 |---|---|
-| `nyxorn-status` | Show status of Ollama and OpenClaw services |
-| `nyxorn-onboard` | Run first-time provider setup |
-| `nyxorn-restart` | Restart the OpenClaw gateway |
-| `nyxorn-start` | Start the OpenClaw gateway |
-| `nyxorn-stop` | Stop the OpenClaw gateway |
-| `nyxorn-logs` | Follow the OpenClaw stdout log |
-| `nyxorn-errors` | Follow the OpenClaw stderr log |
-| `nyxorn-journal` | Live journald output for Ollama + OpenClaw |
+| `nyxorn-status` | Show status of Ollama and the active agent service |
+| `nyxorn-onboard` | OpenClaw: run interactive setup. Hermes: print declarative-config pointer |
+| `nyxorn-restart` | Restart the active agent service (`openclaw` or `hermes-agent`) |
+| `nyxorn-start` | Start the active agent service |
+| `nyxorn-stop` | Stop the active agent service |
+| `nyxorn-logs` | Follow stdout / journald for the active agent |
+| `nyxorn-errors` | Follow stderr / error-priority journal entries |
+| `nyxorn-journal` | Live journald output for Ollama + the active agent |
 | `nyxorn-debug` | Full diagnostic (services, ports, models, logs) |
-| `nyxorn <cmd>` | Run any OpenClaw command as `nyxorn-agent` |
+| `nyxorn <cmd>` | Run any OpenClaw / Hermes command as `nyxorn-agent` |
 
 ## Keeping Ollama up to date
 
@@ -137,6 +251,16 @@ sudo rm -rf /var/lib/nyxorn-agent/.npm-global/lib/node_modules/openclaw
 nyxorn-restart
 ```
 
+**Hermes** (pin to a tagged release in your system flake):
+```nix
+inputs.nyxorn.inputs.hermes-agent.url = "github:NousResearch/hermes-agent/v2026.4.30";
+```
+or update along with everything else:
+```bash
+nix flake update nyxorn
+sudo nixos-rebuild switch --flake .#yourhost
+```
+
 **Nyxorn module itself**:
 ```bash
 cd ~/dotfiles
@@ -154,7 +278,7 @@ sudo nixos-rebuild switch --flake .#yourhost
 | `/var/lib/nyxorn-agent/.npm-global/` | npm-installed OpenClaw binary |
 | `/var/log/nyxorn/` | OpenClaw logs |
 
-## Installing skills manually
+## Installing skills manually (OpenClaw)
 
 ```bash
 sudo -u nyxorn-agent mkdir -p /var/lib/nyxorn-agent/.openclaw/skills/my-skill
@@ -164,3 +288,21 @@ nyxorn-restart
 ```
 
 Browse skills at [clawhub.ai](https://clawhub.ai).
+
+## Installing plugins (Hermes)
+
+Plugins are declarative — add the package to `extraPlugins` (directory plugin) or `extraPythonPackages` (entry-point plugin), then `nixos-rebuild switch`.
+
+```nix
+services.aiAgent.hermes = {
+  extraPlugins = [
+    (pkgs.fetchFromGitHub {
+      owner = "stephenschoettler";
+      repo  = "hermes-lcm";
+      rev   = "v0.7.0";
+      hash  = "sha256-...";
+    })
+  ];
+  settings.plugins.enabled = [ "hermes-lcm" ];
+};
+```

@@ -5,6 +5,11 @@ with lib;
 let
   cfg = config.services.aiAgent;
 
+  # Convenience — the active engine. OpenClaw is the default for backwards
+  # compatibility with pre-Hermes nyxorn deployments.
+  isOpenclaw = cfg.engine == "openclaw";
+  isHermes   = cfg.engine == "hermes";
+
   # Pick the nixpkgs snapshot based on the user's channel preference.
   # "unstable" → nixpkgs-unstable (default, well-tested, 1-3 days behind master)
   # "master"   → nixpkgs master   (bleeding edge, new Ollama releases land same day)
@@ -36,6 +41,12 @@ let
     jq
   ];
 
+  agentService =
+    if isHermes then "hermes-agent"
+    else "openclaw";
+
+  hermesStateDir = "${nyxornHome}/.hermes";
+
   nyxornDebugScript = pkgs.writeShellScriptBin "nyxorn-debug" ''
     RESET='\033[0m'
     BOLD='\033[1m'
@@ -49,8 +60,11 @@ let
     warn() { echo -e "  ''${YELLOW}⚠''${RESET} $*"; }
     hdr()  { echo -e "\n''${BOLD}''${BLUE}══ $* ''${RESET}"; }
 
+    hdr "Engine"
+    ok "engine: ${cfg.engine}"
+
     hdr "Service Status"
-    for svc in ${optionalString cfg.ollama.enable "ollama"} openclaw; do
+    for svc in ${optionalString cfg.ollama.enable "ollama"} ${agentService}; do
       state=$(systemctl is-active "$svc" 2>/dev/null)
       if [ "$state" = "active" ]; then
         ok "$svc: $state"
@@ -59,6 +73,7 @@ let
       fi
     done
 
+    ${optionalString isOpenclaw ''
     hdr "Port Check"
     for port in ${optionalString cfg.ollama.enable "11434"} 18789 18791; do
       if ss -tlnp 2>/dev/null | grep -q "$port"; then
@@ -67,6 +82,16 @@ let
         fail "port $port is NOT open"
       fi
     done
+    ''}
+
+    ${optionalString (isHermes && cfg.ollama.enable) ''
+    hdr "Port Check"
+    if ss -tlnp 2>/dev/null | grep -q 11434; then
+      ok "port 11434 is open"
+    else
+      fail "port 11434 is NOT open"
+    fi
+    ''}
 
     ${optionalString cfg.ollama.enable ''
     hdr "Ollama"
@@ -83,6 +108,7 @@ let
     fi
     ''}
 
+    ${optionalString isOpenclaw ''
     hdr "OpenClaw"
     if [ -f "${openclawStateDir}/openclaw.json" ]; then
       ok "Config found: ${openclawStateDir}/openclaw.json"
@@ -107,6 +133,39 @@ let
     echo -e "\n  --- stderr (last 10 lines) ---"
     tail -n 10 /var/log/nyxorn/openclaw-error.log 2>/dev/null | sed 's/^/  /' \
       || warn "No stderr log yet"
+    ''}
+
+    ${optionalString isHermes ''
+    hdr "Hermes"
+    if [ -f "${hermesStateDir}/config.yaml" ]; then
+      ok "Config found: ${hermesStateDir}/config.yaml"
+    else
+      fail "No config at ${hermesStateDir}/config.yaml — first activation may not have run yet"
+    fi
+
+    if [ -f "${hermesStateDir}/.managed" ]; then
+      ok "Managed-mode marker present (CLI mutations blocked)"
+    else
+      warn "Managed-mode marker missing — service may not have started yet"
+    fi
+
+    if [ -f "${hermesStateDir}/.env" ]; then
+      ok "Env file present at ${hermesStateDir}/.env"
+    else
+      warn "No .env at ${hermesStateDir}/.env — set hermes.environmentFiles for API keys"
+    fi
+
+    if command -v hermes > /dev/null 2>&1; then
+      hr_ver=$(hermes --version 2>/dev/null || echo "unknown")
+      ok "hermes CLI on PATH (v$hr_ver)"
+    else
+      warn "hermes CLI not on PATH — set hermes.addToSystemPackages = true"
+    fi
+
+    hdr "Recent Logs (hermes-agent, journald)"
+    journalctl -u hermes-agent -n 20 --no-pager 2>/dev/null | sed 's/^/  /' \
+      || warn "Could not read journal"
+    ''}
 
     hdr "Resource Usage"
     echo -e "\n  Memory:"
@@ -125,10 +184,55 @@ let
     echo ""
   '';
 
+  # Helper script printed when users run nyxorn-onboard with engine = "hermes".
+  hermesOnboardStub = pkgs.writeShellScriptBin "nyxorn-onboard-hermes" ''
+    cat <<'EOF'
+    Hermes runs in NixOS managed mode — interactive CLI setup is intentionally blocked.
+
+    To configure the agent, edit your NixOS configuration:
+
+      services.aiAgent.hermes.settings = {
+        model.default = "anthropic/claude-sonnet-4";
+      };
+      services.aiAgent.hermes.environmentFiles = [
+        # Path to a 0600 file containing OPENROUTER_API_KEY=... etc.
+        # Use sops-nix or agenix in production.
+        config.sops.secrets."hermes-env".path
+      ];
+
+    Then: sudo nixos-rebuild switch && sudo systemctl restart hermes-agent
+
+    See `services.aiAgent.hermes.*` options or upstream docs:
+      https://hermes-agent.nousresearch.com/docs/getting-started/nix-setup
+    EOF
+  '';
+
 in
 {
   options.services.aiAgent = {
-    enable = mkEnableOption "AI Agent with OpenClaw (and optionally Ollama)";
+    enable = mkEnableOption "AI Agent (OpenClaw or Hermes) with optional Ollama";
+
+    engine = mkOption {
+      type = types.enum [ "openclaw" "hermes" ];
+      default = "openclaw";
+      description = ''
+        Which agent engine to run. Engines are mutually exclusive — only one
+        runs at a time on a given host. Ollama and SearXNG remain shared
+        infrastructure regardless of the engine.
+
+        - "openclaw" (default): the original nyxorn engine. OpenClaw is
+          installed via npm into the nyxorn-agent state dir on first start
+          and runs as a long-lived gateway on port 18789. ClawHub skills
+          (services.aiAgent.clawhubSkills) are supported.
+
+        - "hermes": NousResearch's Hermes Agent, integrated through the
+          upstream services.hermes-agent NixOS module. Configuration is
+          declarative (services.aiAgent.hermes.settings) and the interactive
+          `hermes setup` / `hermes config edit` CLI commands are blocked
+          (managed mode). Plugins go through hermes.extraPlugins /
+          hermes.extraPythonPackages instead of clawhubSkills.
+      '';
+    };
 
     defaultModel = mkOption {
       type = types.nullOr types.str;
@@ -235,12 +339,222 @@ in
       default = [ ];
       example = [ "ivangdavila/self-improving" "someone/some-skill" ];
       description = ''
-        List of ClawHub skill slugs to install automatically.
+        List of ClawHub skill slugs to install automatically (OpenClaw only).
         Each entry is "<author>/<skill-name>" as shown in the ClawHub URL.
         Skills are downloaded and extracted into the OpenClaw skills directory
         on service start if not already present.
         Browse skills at https://clawhub.ai
+
+        Has no effect when services.aiAgent.engine = "hermes" — for Hermes,
+        use services.aiAgent.hermes.extraPlugins /
+        services.aiAgent.hermes.extraPythonPackages instead.
       '';
+    };
+
+    # Hermes engine — thin passthrough façade onto upstream services.hermes-agent.
+    # All options here apply only when services.aiAgent.engine = "hermes".
+    hermes = {
+      settings = mkOption {
+        type = types.attrs;
+        default = { };
+        description = ''
+          Declarative Hermes config rendered as $HERMES_HOME/config.yaml.
+
+          Supports arbitrary nesting; multiple definitions are deep-merged via
+          lib.recursiveUpdate. Nyxorn auto-injects sensible defaults for
+          model.base_url (when ollama.enable = true) and model.default (from
+          services.aiAgent.defaultModel) — your settings always win.
+
+          See: https://hermes-agent.nousresearch.com/docs/getting-started/nix-setup
+        '';
+        example = literalExpression ''
+          {
+            model.default = "anthropic/claude-sonnet-4";
+            toolsets = [ "all" ];
+            memory.memory_enabled = true;
+          }
+        '';
+      };
+
+      configFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Optional escape hatch: path to a hand-written config.yaml. When set,
+          the `settings` option is ignored and the file is copied verbatim to
+          $HERMES_HOME/config.yaml on every activation.
+        '';
+      };
+
+      environmentFiles = mkOption {
+        type = types.listOf types.path;
+        default = [ ];
+        description = ''
+          Paths to env files containing Hermes secrets (provider API keys,
+          messaging-platform tokens, etc.). Merged into $HERMES_HOME/.env at
+          activation time.
+
+          Use sops-nix or agenix in production — never put keys directly in
+          Nix expressions, which end up in the world-readable /nix/store.
+        '';
+        example = literalExpression ''[ config.sops.secrets."hermes-env".path ]'';
+      };
+
+      environment = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = ''
+          Non-secret environment variables for the Hermes service. Visible in
+          /nix/store — do not put secrets here, use environmentFiles instead.
+        '';
+      };
+
+      mcpServers = mkOption {
+        type = types.attrsOf types.attrs;
+        default = { };
+        description = ''
+          MCP (Model Context Protocol) server definitions. Each entry maps
+          1:1 to upstream services.hermes-agent.mcpServers.<name>. Supports
+          both stdio (command/args) and HTTP (url/headers) transports.
+        '';
+        example = literalExpression ''
+          {
+            filesystem = {
+              command = "npx";
+              args = [ "-y" "@modelcontextprotocol/server-filesystem" "/data/workspace" ];
+            };
+          }
+        '';
+      };
+
+      documents = mkOption {
+        type = types.attrsOf (types.either types.str types.path);
+        default = { };
+        description = ''
+          Files installed into the agent's working directory on every
+          activation. Keys are filenames, values are inline strings or paths.
+          Hermes reads filenames like USER.md by convention.
+        '';
+      };
+
+      extraPlugins = mkOption {
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Directory plugin packages symlinked into $HERMES_HOME/plugins/ on
+          activation. Each package must contain plugin.yaml + __init__.py.
+        '';
+      };
+
+      extraPythonPackages = mkOption {
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Python packages added to PYTHONPATH for entry-point plugin
+          discovery. Build with python312Packages.buildPythonPackage.
+        '';
+      };
+
+      extraPackages = mkOption {
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Extra system packages made available to the agent (terminal
+          commands, skills, cron jobs).
+        '';
+      };
+
+      authFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to an OAuth credentials seed file (auth.json). Only copied
+          on first deploy unless authFileForceOverwrite = true.
+        '';
+      };
+
+      authFileForceOverwrite = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Always overwrite auth.json from authFile on activation.";
+      };
+
+      addToSystemPackages = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Add the `hermes` CLI to the system PATH and set HERMES_HOME
+          system-wide so the interactive CLI shares state with the gateway
+          service. Default true so the nyxorn-* aliases work out of the box.
+        '';
+      };
+
+      extraArgs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Extra args appended to `hermes gateway`.";
+      };
+
+      restart = mkOption {
+        type = types.str;
+        default = "always";
+        description = "systemd Restart= policy for hermes-agent.";
+      };
+
+      restartSec = mkOption {
+        type = types.int;
+        default = 5;
+        description = "systemd RestartSec= value for hermes-agent.";
+      };
+
+      container = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Run Hermes in a persistent OCI container instead of a native
+            systemd service. Lets the agent `apt`/`pip`/`npm install`
+            packages at runtime that survive restarts and rebuilds.
+
+            Requires Docker (default) or Podman to be enabled on the host.
+          '';
+        };
+
+        backend = mkOption {
+          type = types.enum [ "docker" "podman" ];
+          default = "docker";
+          description = "Container runtime backend.";
+        };
+
+        image = mkOption {
+          type = types.str;
+          default = "ubuntu:24.04";
+          description = "Base OCI image (pulled at runtime).";
+        };
+
+        extraVolumes = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "Extra volume mounts in `host:container[:mode]` form.";
+          example = [ "/home/user/projects:/projects:rw" ];
+        };
+
+        extraOptions = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "Extra args passed to `docker create` / `podman create`.";
+          example = [ "--gpus" "all" ];
+        };
+
+        hostUsers = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            Interactive users who get a ~/.hermes symlink to the service
+            stateDir and are auto-added to the nyxorn-agent group.
+          '';
+        };
+      };
     };
   };
 
@@ -267,6 +581,38 @@ in
           GPU acceleration has no effect without a local Ollama instance.
         '';
       }
+      {
+        assertion = isOpenclaw || cfg.clawhubSkills == [ ];
+        message = ''
+          services.aiAgent.clawhubSkills is OpenClaw-only and has no effect when
+          services.aiAgent.engine = "hermes".
+
+          For Hermes, install plugins via:
+            services.aiAgent.hermes.extraPlugins        # directory plugins
+            services.aiAgent.hermes.extraPythonPackages # entry-point plugins
+
+          Either set services.aiAgent.engine = "openclaw" or remove clawhubSkills.
+        '';
+      }
+      {
+        assertion = !isHermes || cfg.ollama.enable || cfg.hermes.environmentFiles != [ ];
+        message = ''
+          services.aiAgent.engine = "hermes" without services.aiAgent.ollama.enable
+          requires at least one entry in services.aiAgent.hermes.environmentFiles
+          so Hermes has a remote LLM provider key (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, ...).
+
+          Either enable local Ollama, or set:
+            services.aiAgent.hermes.environmentFiles = [ <path-to-secret-env-file> ];
+        '';
+      }
+      {
+        assertion = !(isHermes && cfg.hermes.container.enable && cfg.hermes.container.backend == "podman")
+                    || config.virtualisation.podman.enable or false;
+        message = ''
+          services.aiAgent.hermes.container.enable = true with backend = "podman"
+          requires virtualisation.podman.enable = true on the host.
+        '';
+      }
     ];
     users.users.nyxorn-agent = {
       isSystemUser = true;
@@ -285,7 +631,7 @@ in
       acceleration = lib.mkIf (cfg.gpuAcceleration != "cpu") cfg.gpuAcceleration;
     };
 
-    systemd.services.openclaw = {
+    systemd.services.openclaw = mkIf isOpenclaw {
       description = "Nyxorn — OpenClaw AI Assistant Gateway";
       after    = [ "network.target" ] ++ optional cfg.ollama.enable "ollama.service";
       wants    = optional cfg.ollama.enable "ollama.service";
@@ -419,6 +765,7 @@ in
 
     systemd.tmpfiles.rules = [
       "d /var/log/nyxorn             0755 nyxorn-agent nyxorn-agent -"
+    ] ++ optionals isOpenclaw [
       "d ${openclawStateDir}         0755 nyxorn-agent nyxorn-agent -"
       "d ${npmGlobalPrefix}          0755 nyxorn-agent nyxorn-agent -"
       "d ${npmGlobalPrefix}/bin      0755 nyxorn-agent nyxorn-agent -"
@@ -447,29 +794,42 @@ in
       };
     };
 
-    environment.systemPackages = openclawTools ++ [ nyxornDebugScript ];
+    environment.systemPackages = [ nyxornDebugScript ]
+                              ++ optionals isOpenclaw openclawTools
+                              ++ optional  isHermes   hermesOnboardStub;
 
     programs.zsh.enable = true;
     programs.bash.completion.enable = true;
 
-    environment.shellAliases = {
-      nyxorn          = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw";
-      nyxorn-onboard  = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local openclaw onboard";
-      nyxorn-debug    = "sudo nyxorn-debug";
-      nyxorn-logs     = "sudo tail -f /var/log/nyxorn/openclaw.log";
-      nyxorn-errors   = "sudo tail -f /var/log/nyxorn/openclaw-error.log";
-      nyxorn-journal  = if cfg.ollama.enable
-                        then "sudo journalctl -u ollama -u openclaw -f"
-                        else "sudo journalctl -u openclaw -f";
-      nyxorn-restart  = "sudo systemctl restart openclaw";
-      nyxorn-stop     = "sudo systemctl stop openclaw";
-      nyxorn-start    = "sudo systemctl start openclaw";
-      nyxorn-status   = if cfg.ollama.enable
-                        then "systemctl status ollama openclaw"
-                        else "systemctl status openclaw";
-    };
+    environment.shellAliases =
+      let
+        ollamaEnv = "OLLAMA_HOST=http://localhost:11434 OLLAMA_API_KEY=ollama-local";
+        openclawCmd = "sudo -u nyxorn-agent env HOME=${nyxornHome} PATH=${npmGlobalPrefix}/bin:/run/current-system/sw/bin:$PATH ${ollamaEnv} openclaw";
+        # Hermes' addToSystemPackages already exports HERMES_HOME; we just need
+        # to drop privileges to the nyxorn-agent service user.
+        hermesCmd   = "sudo -u nyxorn-agent env HOME=${nyxornHome} ${ollamaEnv} hermes";
 
-    services.logrotate = {
+        nyxornCmd        = if isHermes then hermesCmd else openclawCmd;
+        onboardCmd       = if isHermes then "nyxorn-onboard-hermes" else "${openclawCmd} onboard";
+        logsCmd          = if isHermes then "sudo journalctl -u hermes-agent -f"           else "sudo tail -f /var/log/nyxorn/openclaw.log";
+        errorsCmd        = if isHermes then "sudo journalctl -u hermes-agent -p err -f"   else "sudo tail -f /var/log/nyxorn/openclaw-error.log";
+        journalUnits     = (if cfg.ollama.enable then "ollama " else "") + agentService;
+        statusUnits      = (if cfg.ollama.enable then "ollama " else "") + agentService;
+      in
+      {
+        nyxorn          = nyxornCmd;
+        nyxorn-onboard  = onboardCmd;
+        nyxorn-debug    = "sudo nyxorn-debug";
+        nyxorn-logs     = logsCmd;
+        nyxorn-errors   = errorsCmd;
+        nyxorn-journal  = "sudo journalctl -u ${journalUnits} -f";
+        nyxorn-restart  = "sudo systemctl restart ${agentService}";
+        nyxorn-stop     = "sudo systemctl stop ${agentService}";
+        nyxorn-start    = "sudo systemctl start ${agentService}";
+        nyxorn-status   = "systemctl status ${statusUnits}";
+      };
+
+    services.logrotate = mkIf isOpenclaw {
       enable = true;
       settings = {
         "/var/log/nyxorn/openclaw.log" = {
@@ -492,5 +852,78 @@ in
         };
       };
     };
+
+    # ── Hermes engine ──────────────────────────────────────────────────────
+    # Wires the upstream services.hermes-agent module against the existing
+    # nyxorn-agent user / state dir, and auto-injects sensible defaults so
+    # local-Ollama and SearXNG users get a working setup with zero config.
+    services.hermes-agent = mkIf isHermes (
+      let
+        userSettings = cfg.hermes.settings;
+        userModel    = userSettings.model or { };
+
+        hasModelBaseUrl = userModel ? base_url;
+        hasModelDefault = userModel ? default;
+
+        # Only inject keys the user didn't already set; recursiveUpdate then
+        # merges the partial { model = autoModel; } onto userSettings without
+        # clobbering anything user-defined.
+        autoModel =
+          (optionalAttrs (cfg.ollama.enable && !hasModelBaseUrl) {
+            base_url = "http://localhost:11434/v1";
+          }) //
+          (optionalAttrs (cfg.defaultModel != null && !hasModelDefault) {
+            default = cfg.defaultModel;
+          });
+
+        mergedSettings =
+          if autoModel == { } then userSettings
+          else recursiveUpdate userSettings { model = autoModel; };
+
+        # Auto-injected non-secret env vars for the systemd service. Always
+        # additive — user-supplied hermes.environment wins on conflicts.
+        autoEnv = optionalAttrs cfg.enableSearxng {
+          SEARXNG_URL = cfg.searxng.url;
+        };
+
+        mergedEnv = autoEnv // cfg.hermes.environment;
+      in
+      {
+        enable = true;
+        # nyxorn already owns the user / group / home — don't let upstream
+        # double-create them, and reuse the existing state directory so
+        # nyxorn-debug, /var/log/nyxorn, and shell aliases all keep working.
+        user        = "nyxorn-agent";
+        group       = "nyxorn-agent";
+        createUser  = false;
+        stateDir    = nyxornHome;
+
+        addToSystemPackages    = cfg.hermes.addToSystemPackages;
+        environmentFiles       = cfg.hermes.environmentFiles;
+        environment            = mergedEnv;
+        mcpServers             = cfg.hermes.mcpServers;
+        documents              = cfg.hermes.documents;
+        extraPlugins           = cfg.hermes.extraPlugins;
+        extraPythonPackages    = cfg.hermes.extraPythonPackages;
+        extraPackages          = cfg.hermes.extraPackages;
+        authFile               = cfg.hermes.authFile;
+        authFileForceOverwrite = cfg.hermes.authFileForceOverwrite;
+        extraArgs              = cfg.hermes.extraArgs;
+        restart                = cfg.hermes.restart;
+        restartSec             = cfg.hermes.restartSec;
+
+        settings   = mergedSettings;
+        configFile = cfg.hermes.configFile;
+
+        container = {
+          enable       = cfg.hermes.container.enable;
+          backend      = cfg.hermes.container.backend;
+          image        = cfg.hermes.container.image;
+          extraVolumes = cfg.hermes.container.extraVolumes;
+          extraOptions = cfg.hermes.container.extraOptions;
+          hostUsers    = cfg.hermes.container.hostUsers;
+        };
+      }
+    );
   };
 }
