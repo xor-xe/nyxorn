@@ -351,33 +351,49 @@ in
       '';
     };
 
-    openclawChannelPlugins = mkOption {
-      type = types.attrsOf (types.listOf types.str);
+    openclawExtraConfig = mkOption {
+      type = types.attrs;
       default = { };
-      example = {
-        telegram = [ "openclaw-comfyui-api-runner" "self-improving" ];
-        discord  = [ "openclaw-comfyui-api-runner" ];
-      };
       description = ''
-        Per-channel plugin (skill) activation for OpenClaw (OpenClaw only).
+        Arbitrary openclaw.json overrides, deep-merged (via jq) into the live
+        config before the gateway starts on every restart (OpenClaw only).
 
-        Keys are channel names exactly as they appear in openclaw.json
-        (e.g. "telegram", "discord", "slack").  Values are lists of skill
-        basenames — the last path component of the clawhubSkills slug
-        (e.g. "openclaw-comfyui-api-runner" for
-        "genortg/openclaw-comfyui-api-runner").
+        OpenClaw's config schema is strict — unknown keys cause a startup
+        failure. Only use paths that appear in `openclaw config schema` or the
+        official configuration reference at
+        https://docs.openclaw.ai/gateway/configuration-reference.
 
-        On every gateway startup, nyxorn patches openclaw.json so that each
-        listed plugin is present in the channel's "plugins" array.  Existing
-        entries are preserved; duplicates are removed.  Only channels that
-        already exist in openclaw.json are touched — the patch is a no-op for
-        channels that haven't been set up yet.
+        Key paths you may want to set here:
 
-        OpenClaw's control-ui enumerates all plugin-skills automatically, so
-        you only need this for non-UI channels (Telegram, Discord, etc.) that
-        don't inherit the full plugin list.
+        • skills.entries.<name>.enabled — enable or disable a single skill
+          globally (false also removes it from all agents).
+          Note: skills in plugin-skills/ are available to ALL channels and
+          agents by default — no per-channel activation is needed.
+
+        • agents.list[].skills — per-agent skill allowlist.
+          Omitting this key = all skills; an empty list = no skills.
+          If the Telegram (or any other) agent was set up with an explicit
+          skill allowlist that doesn't include a newly installed skill, add
+          the skill name here.  Check the current value first:
+            nyxorn config get agents.list
+
+        • plugins.allow / plugins.entries.<id>.enabled — enable bundled or
+          third-party plugins.
+
+        • mcp.servers — add MCP server definitions declaratively.
+
+        Example — expose a skill to all agents (including Telegram):
+          openclawExtraConfig = {
+            skills.entries."openclaw-comfyui-api-runner".enabled = true;
+          };
 
         Has no effect when services.aiAgent.engine = "hermes".
+      '';
+      example = literalExpression ''
+        {
+          skills.entries."openclaw-comfyui-api-runner".enabled = true;
+          plugins.entries."voice-call".enabled = false;
+        }
       '';
     };
 
@@ -834,31 +850,21 @@ in
           '') cfg.clawhubSkills}
 
           if [ -f "${openclawStateDir}/openclaw.json" ]; then
-            ${optionalString (cfg.openclawChannelPlugins != {}) ''
-            # Patch openclaw.json: ensure each declared plugin is present in
-            # the corresponding channel's "plugins" array.  We touch only
-            # channels that already exist in the config so we never create
-            # phantom channel entries.
-            echo "Patching channel plugins in openclaw.json..." >&2
+            ${optionalString (cfg.openclawExtraConfig != {}) ''
+            # Deep-merge openclawExtraConfig into openclaw.json before starting
+            # the gateway.  Uses jq's * operator (recursive merge) so existing
+            # keys not mentioned in the patch are left untouched.
+            echo "Applying openclawExtraConfig overrides to openclaw.json..." >&2
             _cfg="${openclawStateDir}/openclaw.json"
+            _patch='${builtins.toJSON cfg.openclawExtraConfig}'
             _tmp=$(mktemp /tmp/openclaw-patch-XXXXXX.json)
-            cp "$_cfg" "$_tmp"
-            ${concatStringsSep "\n" (lib.mapAttrsToList (channel: plugins:
-              concatMapStringsSep "\n" (plugin: ''
-                if ${pkgs.jq}/bin/jq -e '.channels | has("${channel}")' "$_tmp" > /dev/null 2>&1; then
-                  ${pkgs.jq}/bin/jq \
-                    '.channels["${channel}"].plugins =
-                       ((.channels["${channel}"].plugins // []) + ["${plugin}"] | unique)' \
-                    "$_tmp" > "$_tmp.next" && mv "$_tmp.next" "$_tmp" \
-                    && echo "  [OK] added plugin '${plugin}' to channel '${channel}'" >&2 \
-                    || echo "  [WARN] jq patch failed for plugin '${plugin}' / channel '${channel}'" >&2
-                else
-                  echo "  [SKIP] channel '${channel}' not found in openclaw.json — skipping plugin '${plugin}'" >&2
-                fi
-              '') plugins
-            ) cfg.openclawChannelPlugins)}
-            cp "$_tmp" "$_cfg"
-            rm -f "$_tmp"
+            if ${pkgs.jq}/bin/jq --argjson patch "$_patch" '. * $patch' "$_cfg" > "$_tmp"; then
+              mv "$_tmp" "$_cfg"
+              echo "  [OK] openclawExtraConfig applied" >&2
+            else
+              rm -f "$_tmp"
+              echo "  [WARN] openclawExtraConfig jq merge failed — starting with existing config" >&2
+            fi
             ''}
 
             echo "OpenClaw configured. Starting gateway..." >&2

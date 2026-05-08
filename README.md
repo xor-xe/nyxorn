@@ -104,7 +104,7 @@ services.aiAgent = {
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes. For Hermes, a plugin that reads `SEARXNG_URL` (e.g. [Sekurvia](https://github.com/xor-xe/Sekurvia)) is required to actually use it |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
-| `openclawChannelPlugins` | attrs of lists | `{}` | Per-channel plugin activation. Keys are channel names (e.g. `"telegram"`), values are skill basenames. See [Per-channel plugin activation](#per-channel-plugin-activation-openclaw). **OpenClaw only** |
+| `openclawExtraConfig` | attrs | `{}` | Arbitrary deep-merge patch applied to `openclaw.json` before every gateway start. See [Declarative config overrides](#declarative-config-overrides-openclaw). **OpenClaw only** |
 
 ### Hermes engine (`services.aiAgent.hermes.*`)
 
@@ -291,44 +291,63 @@ nyxorn-restart
 
 Browse skills at [clawhub.ai](https://clawhub.ai).
 
-> **Tip:** prefer declaring skills in `clawhubSkills` and activating them per-channel via
-> `openclawChannelPlugins` so the configuration survives rebuilds without manual intervention.
+> **Tip:** prefer declaring skills in `clawhubSkills` so the installation survives rebuilds
+> without manual intervention. Skills in `plugin-skills/` are available to all channels and
+> agents by default — see [Declarative config overrides](#declarative-config-overrides-openclaw)
+> if you need fine-grained control.
 
-## Per-channel plugin activation (OpenClaw)
+## Declarative config overrides (OpenClaw)
 
-OpenClaw tracks which plugins are active per-channel inside `openclaw.json`. The control-ui
-channel enumerates all installed skills automatically, but non-UI channels (Telegram, Discord,
-Slack, …) only expose the tools their channel config explicitly lists.
+Skills installed via `clawhubSkills` land in `plugin-skills/` and are **available to every
+agent and channel by default** — no per-channel activation is needed. OpenClaw's channel
+objects have a fixed schema and do not support per-channel plugin fields.
 
-Use `openclawChannelPlugins` to declare which skills each channel should have access to.
-On every gateway restart nyxorn patches `openclaw.json` so the entries are always present —
-existing config is preserved and duplicates are removed.
+If a skill is installed but an agent (e.g. the Telegram agent) doesn't use its tools, the
+most common cause is an explicit skill allowlist on that agent's config entry. Inspect it
+with:
 
-The key is the channel name exactly as it appears in `openclaw.json`; the values are the
-**basenames** of your `clawhubSkills` slugs (the part after the `/`).
+```bash
+nyxorn config get agents.list
+```
+
+Use `openclawExtraConfig` to apply a declarative deep-merge patch to `openclaw.json` on
+every gateway start. **Only use paths that appear in `openclaw config schema`** — the gateway
+rejects unknown keys at startup and logs the error. Run `openclaw doctor --fix` after any
+config corruption.
 
 ```nix
 services.aiAgent = {
   enable = true;
   clawhubSkills = [ "genortg/openclaw-comfyui-api-runner" ];
 
-  openclawChannelPlugins = {
-    telegram = [ "openclaw-comfyui-api-runner" ];
-    discord  = [ "openclaw-comfyui-api-runner" ];
+  # Explicitly enable the skill globally (harmless even if already on):
+  openclawExtraConfig = {
+    skills.entries."openclaw-comfyui-api-runner".enabled = true;
   };
 };
 ```
 
-After rebuilding, restart the service to apply the patch immediately:
+After rebuilding, restart the service:
 
 ```bash
 sudo nixos-rebuild switch
 nyxorn-restart
 ```
 
-If a channel listed here doesn't exist yet in `openclaw.json` (e.g. you haven't connected
-Telegram yet), the entry is silently skipped and logged as `[SKIP]` — it takes effect
-automatically the next time the gateway restarts after the channel is set up.
+Other useful overrides:
+
+```nix
+openclawExtraConfig = {
+  # Enable a bundled plugin
+  plugins.entries."voice-call".enabled = true;
+
+  # Add an MCP server
+  mcp.servers.docs = {
+    command = "npx";
+    args = [ "-y" "@modelcontextprotocol/server-fetch" ];
+  };
+};
+```
 
 ## Installing plugins and skills (Hermes)
 
