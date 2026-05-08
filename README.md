@@ -105,6 +105,7 @@ services.aiAgent = {
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
 | `openclawExtraConfig` | attrs | `{}` | Arbitrary deep-merge patch applied to `openclaw.json` before every gateway start. See [Declarative config overrides](#declarative-config-overrides-openclaw). **OpenClaw only** |
+| `openclawAgentSkills` | list | `[]` | Skill basenames appended (via `jq map()`) to every agent's explicit skill allowlist. Use when Telegram or other agents were set up with an explicit `skills` list that doesn't include newly installed skills. **OpenClaw only** |
 
 ### Hermes engine (`services.aiAgent.hermes.*`)
 
@@ -334,7 +335,34 @@ sudo nixos-rebuild switch
 nyxorn-restart
 ```
 
-Other useful overrides:
+### When agents have an explicit skill allowlist
+
+`openclawExtraConfig` uses `jq`'s `*` (recursive merge) operator. This is correct for object
+keys but **replaces arrays** rather than appending to them. If an agent was set up during
+onboarding with an explicit `agents.list[].skills` allowlist, new skills won't appear there
+automatically — and `openclawExtraConfig` can't help because overwriting the array would wipe
+the existing entries.
+
+Use `openclawAgentSkills` instead. It runs a `jq map()` expression that **appends** the listed
+skill names to every agent that already has an explicit allowlist, then deduplicates. Agents
+with no `skills` key (inherit-all) are left untouched.
+
+```nix
+services.aiAgent = {
+  enable = true;
+  clawhubSkills = [
+    "genortg/openclaw-comfyui-api-runner"
+    "ivangdavila/self-improving"
+  ];
+
+  # Appends to each agent's existing skills list (never replaces it):
+  openclawAgentSkills = [ "openclaw-comfyui-api-runner" "self-improving" ];
+};
+```
+
+Both options can be combined — `openclawExtraConfig` runs first, then `openclawAgentSkills`.
+
+### Other useful `openclawExtraConfig` overrides
 
 ```nix
 openclawExtraConfig = {

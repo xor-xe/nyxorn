@@ -397,6 +397,31 @@ in
       '';
     };
 
+    openclawAgentSkills = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "openclaw-comfyui-api-runner" "self-improving" ];
+      description = ''
+        Skill basenames to inject into every agent's explicit skill allowlist
+        in openclaw.json (OpenClaw only).
+
+        When an agent (e.g. the Telegram bot) was set up with an explicit
+        skills list (agents.list[].skills), newly installed ClawHub skills
+        are NOT automatically added to that list — the agent only sees skills
+        it was originally configured with.
+
+        openclawExtraConfig cannot fix this because its jq * merge operator
+        replaces arrays rather than appending to them.  This option uses a
+        jq map() expression to append the listed basenames to every agent
+        that already has an explicit allowlist, deduplicating the result.
+
+        Agents with no explicit skills key (= inherit all skills) are left
+        untouched — they already see every installed skill.
+
+        Has no effect when services.aiAgent.engine = "hermes".
+      '';
+    };
+
     # Hermes engine — thin passthrough façade onto upstream services.hermes-agent.
     # All options here apply only when services.aiAgent.engine = "hermes".
     hermes = {
@@ -864,6 +889,30 @@ in
             else
               rm -f "$_tmp"
               echo "  [WARN] openclawExtraConfig jq merge failed — starting with existing config" >&2
+            fi
+            ''}
+
+            ${optionalString (cfg.openclawAgentSkills != []) ''
+            # Append openclawAgentSkills to every agent that has an explicit
+            # skills allowlist.  Agents without one already inherit all skills.
+            echo "Patching agent skill allowlists in openclaw.json..." >&2
+            _cfg="${openclawStateDir}/openclaw.json"
+            _skills='${builtins.toJSON cfg.openclawAgentSkills}'
+            _tmp=$(mktemp /tmp/openclaw-agent-skills-XXXXXX.json)
+            if ${pkgs.jq}/bin/jq --argjson skills "$_skills" \
+              'if .agents.list then
+                 .agents.list |= map(
+                   if (.skills | type) == "array" then
+                     .skills |= (. + $skills | unique)
+                   else . end
+                 )
+               else . end' \
+              "$_cfg" > "$_tmp"; then
+              mv "$_tmp" "$_cfg"
+              echo "  [OK] openclawAgentSkills applied" >&2
+            else
+              rm -f "$_tmp"
+              echo "  [WARN] openclawAgentSkills jq patch failed — starting with existing config" >&2
             fi
             ''}
 
