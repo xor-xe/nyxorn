@@ -897,10 +897,9 @@ in
     systemd.tmpfiles.rules = [
       "d /var/log/nyxorn             0755 nyxorn-agent nyxorn-agent -"
     ] ++ optionals isOpenclaw [
-      "d ${openclawStateDir}                   0755 nyxorn-agent nyxorn-agent -"
-      "d ${openclawStateDir}/plugin-skills     0755 nyxorn-agent nyxorn-agent -"
-      "d ${npmGlobalPrefix}                    0755 nyxorn-agent nyxorn-agent -"
-      "d ${npmGlobalPrefix}/bin                0755 nyxorn-agent nyxorn-agent -"
+      "d ${openclawStateDir}         0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}          0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}/bin      0755 nyxorn-agent nyxorn-agent -"
     ];
 
     services.searx = mkIf cfg.enableSearxng {
