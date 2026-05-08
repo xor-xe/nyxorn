@@ -345,6 +345,13 @@ in
         on service start if not already present.
         Browse skills at https://clawhub.ai
 
+        Note: the slug is only a download identifier.  OpenClaw indexes skills
+        by the `name` field declared in the skill's SKILL.md frontmatter — not
+        by the directory or repo name.  When asking the agent to use a skill,
+        invoke the SKILL.md name (e.g. "comfyui-safe-connector") rather than
+        the slug suffix (e.g. "openclaw-comfyui-api-runner").  Inspect
+        plugin-skills/<dir>/SKILL.md to find the canonical name.
+
         Has no effect when services.aiAgent.engine = "hermes" — for Hermes,
         use services.aiAgent.hermes.extraPlugins /
         services.aiAgent.hermes.extraPythonPackages instead.
@@ -355,70 +362,40 @@ in
       type = types.attrs;
       default = { };
       description = ''
-        Arbitrary openclaw.json overrides, deep-merged (via jq) into the live
-        config before the gateway starts on every restart (OpenClaw only).
+        Arbitrary openclaw.json overrides, deep-merged (via jq's `*` operator)
+        into the live config before the gateway starts on every restart
+        (OpenClaw only).
 
         OpenClaw's config schema is strict — unknown keys cause a startup
-        failure. Only use paths that appear in `openclaw config schema` or the
-        official configuration reference at
+        failure.  Only use paths that appear in `openclaw config schema` or
+        the official configuration reference at
         https://docs.openclaw.ai/gateway/configuration-reference.
 
-        Key paths you may want to set here:
-
-        • skills.entries.<name>.enabled — enable or disable a single skill
-          globally (false also removes it from all agents).
-          Note: skills in plugin-skills/ are available to ALL channels and
-          agents by default — no per-channel activation is needed.
-
-        • agents.list[].skills — per-agent skill allowlist.
-          Omitting this key = all skills; an empty list = no skills.
-          If the Telegram (or any other) agent was set up with an explicit
-          skill allowlist that doesn't include a newly installed skill, add
-          the skill name here.  Check the current value first:
-            nyxorn config get agents.list
+        Useful paths:
 
         • plugins.allow / plugins.entries.<id>.enabled — enable bundled or
           third-party plugins.
+        • skills.entries.<skillKey>.enabled — disable a single skill
+          globally.  The key is the skill's SKILL.md `name`, not its
+          directory name.  Skills are enabled by default, so this is only
+          needed to turn one off.
+        • mcp.servers — declarative MCP server definitions.
+        • agents.defaults.* — workspace, model, memory, and tool defaults.
 
-        • mcp.servers — add MCP server definitions declaratively.
-
-        Example — expose a skill to all agents (including Telegram):
-          openclawExtraConfig = {
-            skills.entries."openclaw-comfyui-api-runner".enabled = true;
-          };
+        Caveat: the `*` operator deep-merges objects but REPLACES arrays.
+        Setting a list-typed field here clobbers the existing list rather
+        than appending to it.
 
         Has no effect when services.aiAgent.engine = "hermes".
       '';
       example = literalExpression ''
         {
-          skills.entries."openclaw-comfyui-api-runner".enabled = true;
           plugins.entries."voice-call".enabled = false;
+          mcp.servers.docs = {
+            command = "npx";
+            args    = [ "-y" "@modelcontextprotocol/server-fetch" ];
+          };
         }
-      '';
-    };
-
-    openclawAgentSkills = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      example = [ "openclaw-comfyui-api-runner" "self-improving" ];
-      description = ''
-        Skill basenames to inject into every agent's explicit skill allowlist
-        in openclaw.json (OpenClaw only).
-
-        When an agent (e.g. the Telegram bot) was set up with an explicit
-        skills list (agents.list[].skills), newly installed ClawHub skills
-        are NOT automatically added to that list — the agent only sees skills
-        it was originally configured with.
-
-        openclawExtraConfig cannot fix this because its jq * merge operator
-        replaces arrays rather than appending to them.  This option uses a
-        jq map() expression to append the listed basenames to every agent
-        that already has an explicit allowlist, deduplicating the result.
-
-        Agents with no explicit skills key (= inherit all skills) are left
-        untouched — they already see every installed skill.
-
-        Has no effect when services.aiAgent.engine = "hermes".
       '';
     };
 
@@ -889,30 +866,6 @@ in
             else
               rm -f "$_tmp"
               echo "  [WARN] openclawExtraConfig jq merge failed — starting with existing config" >&2
-            fi
-            ''}
-
-            ${optionalString (cfg.openclawAgentSkills != []) ''
-            # Append openclawAgentSkills to every agent that has an explicit
-            # skills allowlist.  Agents without one already inherit all skills.
-            echo "Patching agent skill allowlists in openclaw.json..." >&2
-            _cfg="${openclawStateDir}/openclaw.json"
-            _skills='${builtins.toJSON cfg.openclawAgentSkills}'
-            _tmp=$(mktemp /tmp/openclaw-agent-skills-XXXXXX.json)
-            if ${pkgs.jq}/bin/jq --argjson skills "$_skills" \
-              'if .agents.list then
-                 .agents.list |= map(
-                   if (.skills | type) == "array" then
-                     .skills |= (. + $skills | unique)
-                   else . end
-                 )
-               else . end' \
-              "$_cfg" > "$_tmp"; then
-              mv "$_tmp" "$_cfg"
-              echo "  [OK] openclawAgentSkills applied" >&2
-            else
-              rm -f "$_tmp"
-              echo "  [WARN] openclawAgentSkills jq patch failed — starting with existing config" >&2
             fi
             ''}
 

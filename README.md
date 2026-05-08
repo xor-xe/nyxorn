@@ -105,7 +105,6 @@ services.aiAgent = {
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
 | `openclawExtraConfig` | attrs | `{}` | Arbitrary deep-merge patch applied to `openclaw.json` before every gateway start. See [Declarative config overrides](#declarative-config-overrides-openclaw). **OpenClaw only** |
-| `openclawAgentSkills` | list | `[]` | Skill basenames appended (via `jq map()`) to every agent's explicit skill allowlist. Use when Telegram or other agents were set up with an explicit `skills` list that doesn't include newly installed skills. **OpenClaw only** |
 
 ### Hermes engine (`services.aiAgent.hermes.*`)
 
@@ -299,31 +298,39 @@ Browse skills at [clawhub.ai](https://clawhub.ai).
 
 ## Declarative config overrides (OpenClaw)
 
-Skills installed via `clawhubSkills` land in `plugin-skills/` and are **available to every
-agent and channel by default** — no per-channel activation is needed. OpenClaw's channel
-objects have a fixed schema and do not support per-channel plugin fields.
+Skills installed via `clawhubSkills` land in `plugin-skills/` and are **available
+everywhere** — every agent and every channel — by default. OpenClaw's schema has no
+per-channel skill filter and no per-agent allowlist; the only knobs are global
+(`skills.entries.<skillKey>.enabled`).
 
-If a skill is installed but an agent (e.g. the Telegram agent) doesn't use its tools, the
-most common cause is an explicit skill allowlist on that agent's config entry. Inspect it
-with:
+> **Skill name vs. slug.** ClawHub slugs are download identifiers — OpenClaw indexes
+> the installed skill by the `name` field in its `SKILL.md` frontmatter. The two often
+> differ (e.g. the slug `genortg/openclaw-comfyui-api-runner` installs a skill whose
+> SKILL.md name is `comfyui-safe-connector`). When asking the agent to use a skill,
+> reference the SKILL.md name. Inspect:
+>
+> ```bash
+> sudo head -20 /var/lib/nyxorn-agent/.openclaw/plugin-skills/<dir>/SKILL.md
+> ```
 
-```bash
-nyxorn config get agents.list
-```
-
-Use `openclawExtraConfig` to apply a declarative deep-merge patch to `openclaw.json` on
-every gateway start. **Only use paths that appear in `openclaw config schema`** — the gateway
-rejects unknown keys at startup and logs the error. Run `openclaw doctor --fix` after any
-config corruption.
+`openclawExtraConfig` applies a declarative deep-merge patch to `openclaw.json` on every
+gateway start. **Only use paths that appear in `openclaw config schema`** — the gateway
+rejects unknown keys at startup. Run `openclaw doctor --fix` after any config corruption.
 
 ```nix
 services.aiAgent = {
   enable = true;
-  clawhubSkills = [ "genortg/openclaw-comfyui-api-runner" ];
+  clawhubSkills = [ "ivangdavila/self-improving" ];
 
-  # Explicitly enable the skill globally (harmless even if already on):
   openclawExtraConfig = {
-    skills.entries."openclaw-comfyui-api-runner".enabled = true;
+    # Disable a bundled plugin
+    plugins.entries."voice-call".enabled = false;
+
+    # Add an MCP server
+    mcp.servers.docs = {
+      command = "npx";
+      args    = [ "-y" "@modelcontextprotocol/server-fetch" ];
+    };
   };
 };
 ```
@@ -335,47 +342,9 @@ sudo nixos-rebuild switch
 nyxorn-restart
 ```
 
-### When agents have an explicit skill allowlist
-
-`openclawExtraConfig` uses `jq`'s `*` (recursive merge) operator. This is correct for object
-keys but **replaces arrays** rather than appending to them. If an agent was set up during
-onboarding with an explicit `agents.list[].skills` allowlist, new skills won't appear there
-automatically — and `openclawExtraConfig` can't help because overwriting the array would wipe
-the existing entries.
-
-Use `openclawAgentSkills` instead. It runs a `jq map()` expression that **appends** the listed
-skill names to every agent that already has an explicit allowlist, then deduplicates. Agents
-with no `skills` key (inherit-all) are left untouched.
-
-```nix
-services.aiAgent = {
-  enable = true;
-  clawhubSkills = [
-    "genortg/openclaw-comfyui-api-runner"
-    "ivangdavila/self-improving"
-  ];
-
-  # Appends to each agent's existing skills list (never replaces it):
-  openclawAgentSkills = [ "openclaw-comfyui-api-runner" "self-improving" ];
-};
-```
-
-Both options can be combined — `openclawExtraConfig` runs first, then `openclawAgentSkills`.
-
-### Other useful `openclawExtraConfig` overrides
-
-```nix
-openclawExtraConfig = {
-  # Enable a bundled plugin
-  plugins.entries."voice-call".enabled = true;
-
-  # Add an MCP server
-  mcp.servers.docs = {
-    command = "npx";
-    args = [ "-y" "@modelcontextprotocol/server-fetch" ];
-  };
-};
-```
+> **Caveat.** `jq`'s `*` operator deep-merges objects but **replaces arrays**. Setting
+> a list-typed field via `openclawExtraConfig` clobbers the existing list rather than
+> appending to it.
 
 ## Installing plugins and skills (Hermes)
 
