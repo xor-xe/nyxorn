@@ -351,6 +351,36 @@ in
       '';
     };
 
+    openclawChannelPlugins = mkOption {
+      type = types.attrsOf (types.listOf types.str);
+      default = { };
+      example = {
+        telegram = [ "openclaw-comfyui-api-runner" "self-improving" ];
+        discord  = [ "openclaw-comfyui-api-runner" ];
+      };
+      description = ''
+        Per-channel plugin (skill) activation for OpenClaw (OpenClaw only).
+
+        Keys are channel names exactly as they appear in openclaw.json
+        (e.g. "telegram", "discord", "slack").  Values are lists of skill
+        basenames — the last path component of the clawhubSkills slug
+        (e.g. "openclaw-comfyui-api-runner" for
+        "genortg/openclaw-comfyui-api-runner").
+
+        On every gateway startup, nyxorn patches openclaw.json so that each
+        listed plugin is present in the channel's "plugins" array.  Existing
+        entries are preserved; duplicates are removed.  Only channels that
+        already exist in openclaw.json are touched — the patch is a no-op for
+        channels that haven't been set up yet.
+
+        OpenClaw's control-ui enumerates all plugin-skills automatically, so
+        you only need this for non-UI channels (Telegram, Discord, etc.) that
+        don't inherit the full plugin list.
+
+        Has no effect when services.aiAgent.engine = "hermes".
+      '';
+    };
+
     # Hermes engine — thin passthrough façade onto upstream services.hermes-agent.
     # All options here apply only when services.aiAgent.engine = "hermes".
     hermes = {
@@ -778,7 +808,14 @@ in
 
           ${concatMapStringsSep "\n" (slug:
             let skillName = builtins.baseNameOf slug; in ''
-            SKILL_DIR="${openclawStateDir}/skills/${skillName}"
+            SKILL_DIR="${openclawStateDir}/plugin-skills/${skillName}"
+            OLD_SKILL_DIR="${openclawStateDir}/skills/${skillName}"
+            if [ -d "$OLD_SKILL_DIR" ] && [ ! -d "$SKILL_DIR" ]; then
+              echo "Migrating skill ${slug} from skills/ to plugin-skills/..." >&2
+              mv "$OLD_SKILL_DIR" "$SKILL_DIR" \
+                && echo "Skill ${slug} migrated." >&2 \
+                || echo "Migration failed for ${slug}, will re-download." >&2
+            fi
             if [ ! -d "$SKILL_DIR" ]; then
               echo "Installing ClawHub skill: ${slug}..." >&2
               mkdir -p "$SKILL_DIR"
@@ -797,6 +834,33 @@ in
           '') cfg.clawhubSkills}
 
           if [ -f "${openclawStateDir}/openclaw.json" ]; then
+            ${optionalString (cfg.openclawChannelPlugins != {}) ''
+            # Patch openclaw.json: ensure each declared plugin is present in
+            # the corresponding channel's "plugins" array.  We touch only
+            # channels that already exist in the config so we never create
+            # phantom channel entries.
+            echo "Patching channel plugins in openclaw.json..." >&2
+            _cfg="${openclawStateDir}/openclaw.json"
+            _tmp=$(mktemp /tmp/openclaw-patch-XXXXXX.json)
+            cp "$_cfg" "$_tmp"
+            ${concatStringsSep "\n" (lib.mapAttrsToList (channel: plugins:
+              concatMapStringsSep "\n" (plugin: ''
+                if ${pkgs.jq}/bin/jq -e '.channels | has("${channel}")' "$_tmp" > /dev/null 2>&1; then
+                  ${pkgs.jq}/bin/jq \
+                    '.channels["${channel}"].plugins =
+                       ((.channels["${channel}"].plugins // []) + ["${plugin}"] | unique)' \
+                    "$_tmp" > "$_tmp.next" && mv "$_tmp.next" "$_tmp" \
+                    && echo "  [OK] added plugin '${plugin}' to channel '${channel}'" >&2 \
+                    || echo "  [WARN] jq patch failed for plugin '${plugin}' / channel '${channel}'" >&2
+                else
+                  echo "  [SKIP] channel '${channel}' not found in openclaw.json — skipping plugin '${plugin}'" >&2
+                fi
+              '') plugins
+            ) cfg.openclawChannelPlugins)}
+            cp "$_tmp" "$_cfg"
+            rm -f "$_tmp"
+            ''}
+
             echo "OpenClaw configured. Starting gateway..." >&2
             openclaw gateway 2>&1
 
@@ -833,9 +897,10 @@ in
     systemd.tmpfiles.rules = [
       "d /var/log/nyxorn             0755 nyxorn-agent nyxorn-agent -"
     ] ++ optionals isOpenclaw [
-      "d ${openclawStateDir}         0755 nyxorn-agent nyxorn-agent -"
-      "d ${npmGlobalPrefix}          0755 nyxorn-agent nyxorn-agent -"
-      "d ${npmGlobalPrefix}/bin      0755 nyxorn-agent nyxorn-agent -"
+      "d ${openclawStateDir}                   0755 nyxorn-agent nyxorn-agent -"
+      "d ${openclawStateDir}/plugin-skills     0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}                    0755 nyxorn-agent nyxorn-agent -"
+      "d ${npmGlobalPrefix}/bin                0755 nyxorn-agent nyxorn-agent -"
     ];
 
     services.searx = mkIf cfg.enableSearxng {

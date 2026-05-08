@@ -104,6 +104,7 @@ services.aiAgent = {
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes. For Hermes, a plugin that reads `SEARXNG_URL` (e.g. [Sekurvia](https://github.com/xor-xe/Sekurvia)) is required to actually use it |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
+| `openclawChannelPlugins` | attrs of lists | `{}` | Per-channel plugin activation. Keys are channel names (e.g. `"telegram"`), values are skill basenames. See [Per-channel plugin activation](#per-channel-plugin-activation-openclaw). **OpenClaw only** |
 
 ### Hermes engine (`services.aiAgent.hermes.*`)
 
@@ -274,21 +275,60 @@ sudo nixos-rebuild switch --flake .#yourhost
 | Path | Contents |
 |---|---|
 | `/var/lib/nyxorn-agent/` | Agent home directory |
-| `/var/lib/nyxorn-agent/.openclaw/` | OpenClaw config and state |
-| `/var/lib/nyxorn-agent/.openclaw/skills/` | Installed skills |
+| `/var/lib/nyxorn-agent/.openclaw/` | OpenClaw config and state (`openclaw.json`) |
+| `/var/lib/nyxorn-agent/.openclaw/plugin-skills/` | ClawHub skills installed via `clawhubSkills` |
 | `/var/lib/nyxorn-agent/.npm-global/` | npm-installed OpenClaw binary |
 | `/var/log/nyxorn/` | OpenClaw logs |
 
 ## Installing skills manually (OpenClaw)
 
 ```bash
-sudo -u nyxorn-agent mkdir -p /var/lib/nyxorn-agent/.openclaw/skills/my-skill
-sudo unzip ~/Downloads/skill.zip -d /var/lib/nyxorn-agent/.openclaw/skills/my-skill/
-sudo chown -R nyxorn-agent:nyxorn-agent /var/lib/nyxorn-agent/.openclaw/skills/
+sudo -u nyxorn-agent mkdir -p /var/lib/nyxorn-agent/.openclaw/plugin-skills/my-skill
+sudo unzip ~/Downloads/skill.zip -d /var/lib/nyxorn-agent/.openclaw/plugin-skills/my-skill/
+sudo chown -R nyxorn-agent:nyxorn-agent /var/lib/nyxorn-agent/.openclaw/plugin-skills/
 nyxorn-restart
 ```
 
 Browse skills at [clawhub.ai](https://clawhub.ai).
+
+> **Tip:** prefer declaring skills in `clawhubSkills` and activating them per-channel via
+> `openclawChannelPlugins` so the configuration survives rebuilds without manual intervention.
+
+## Per-channel plugin activation (OpenClaw)
+
+OpenClaw tracks which plugins are active per-channel inside `openclaw.json`. The control-ui
+channel enumerates all installed skills automatically, but non-UI channels (Telegram, Discord,
+Slack, …) only expose the tools their channel config explicitly lists.
+
+Use `openclawChannelPlugins` to declare which skills each channel should have access to.
+On every gateway restart nyxorn patches `openclaw.json` so the entries are always present —
+existing config is preserved and duplicates are removed.
+
+The key is the channel name exactly as it appears in `openclaw.json`; the values are the
+**basenames** of your `clawhubSkills` slugs (the part after the `/`).
+
+```nix
+services.aiAgent = {
+  enable = true;
+  clawhubSkills = [ "genortg/openclaw-comfyui-api-runner" ];
+
+  openclawChannelPlugins = {
+    telegram = [ "openclaw-comfyui-api-runner" ];
+    discord  = [ "openclaw-comfyui-api-runner" ];
+  };
+};
+```
+
+After rebuilding, restart the service to apply the patch immediately:
+
+```bash
+sudo nixos-rebuild switch
+nyxorn-restart
+```
+
+If a channel listed here doesn't exist yet in `openclaw.json` (e.g. you haven't connected
+Telegram yet), the entry is silently skipped and logged as `[SKIP]` — it takes effect
+automatically the next time the gateway restarts after the channel is set up.
 
 ## Installing plugins and skills (Hermes)
 
