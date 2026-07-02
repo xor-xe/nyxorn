@@ -104,6 +104,7 @@ services.aiAgent = {
 | `searxng.url` | string | `http://127.0.0.1:8888` | SearXNG URL. Exposed as `SEARXNG_URL` env var to OpenClaw and Hermes. For Hermes, a plugin that reads `SEARXNG_URL` (e.g. [Sekurvia](https://github.com/xor-xe/Sekurvia)) is required to actually use it |
 | `searxng.secretKey` | string | — | **Required** when `enableSearxng = true`. Generate: `openssl rand -hex 32` |
 | `clawhubSkills` | list | `[]` | ClawHub skill slugs to install automatically. **OpenClaw only** — assertion fails if set with `engine = "hermes"` |
+| `openclawEnvironment` | attrs of str | `{}` | Extra environment variables injected into the OpenClaw systemd service. Useful for proxy settings (`HTTPS_PROXY`, `ALL_PROXY`) when the host network blocks Telegram/Discord APIs. **OpenClaw only** |
 | `openclawExtraConfig` | attrs | `{}` | Arbitrary deep-merge patch applied to `openclaw.json` before every gateway start. See [Declarative config overrides](#declarative-config-overrides-openclaw). **OpenClaw only** |
 
 ### Hermes engine (`services.aiAgent.hermes.*`)

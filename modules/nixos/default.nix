@@ -95,8 +95,8 @@ let
 
     ${optionalString cfg.ollama.enable ''
     hdr "Ollama"
-    ollama_ver=$(ollama --version 2>/dev/null || echo "unknown")
-    ok "package version: $ollama_ver (channel: ${cfg.ollama.channel})"
+    ollama_ver=$(ollama --version 2>/dev/null | sed 's/ollama version is //' || echo "unknown")
+    ok "version: $ollama_ver  channel: ${cfg.ollama.channel}"
     ok "listen host: ${cfg.ollama.host}  openFirewall: ${if cfg.ollama.openFirewall then "true" else "false"}"
     if curl -sf http://${cfg.ollama.host}:11434/api/tags > /dev/null 2>&1; then
       ok "Ollama API reachable at http://${cfg.ollama.host}:11434"
@@ -387,6 +387,40 @@ in
         Has no effect when services.aiAgent.engine = "hermes" — for Hermes,
         use services.aiAgent.hermes.extraPlugins /
         services.aiAgent.hermes.extraPythonPackages instead.
+      '';
+    };
+
+    openclawEnvironment = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      description = ''
+        Extra environment variables injected into the OpenClaw systemd service
+        (OpenClaw only). Visible in the process environment but NOT in
+        /nix/store — do not put secrets here; use a systemd EnvironmentFile
+        (or sops-nix) and reference it via a NixOS overlay instead.
+
+        Typical uses:
+
+        • Outbound proxy for Telegram / Discord when the host's network
+          blocks direct access to messaging-platform APIs:
+            openclawEnvironment = {
+              HTTPS_PROXY = "socks5h://127.0.0.1:1080";
+              ALL_PROXY   = "socks5h://127.0.0.1:1080";
+              NO_PROXY    = "localhost,127.0.0.1,::1";
+            };
+
+        • Any OpenClaw env-var knob documented upstream (e.g.
+          OPENCLAW_LOG_LEVEL, OPENCLAW_STATE_DIR overrides).
+
+        Has no effect when services.aiAgent.engine = "hermes" — use
+        services.aiAgent.hermes.environment for that.
+      '';
+      example = literalExpression ''
+        {
+          HTTPS_PROXY = "socks5h://127.0.0.1:1080";
+          ALL_PROXY   = "socks5h://127.0.0.1:1080";
+          NO_PROXY    = "localhost,127.0.0.1,::1";
+        }
       '';
     };
 
@@ -807,7 +841,7 @@ in
         OPENCLAW_HOME = nyxornHome;
         OPENCLAW_NIX_MODE = "1";
         SEARXNG_URL = lib.mkIf cfg.enableSearxng cfg.searxng.url;
-      };
+      } // cfg.openclawEnvironment;
 
       serviceConfig = {
         Type = "simple";
