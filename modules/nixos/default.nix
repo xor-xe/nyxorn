@@ -305,6 +305,35 @@ in
       '';
     };
 
+    ollama.host = mkOption {
+      type = types.str;
+      default = "127.0.0.1";
+      description = ''
+        Address Ollama listens on.
+
+        - "127.0.0.1" (default): loopback only — not reachable from other machines.
+        - "0.0.0.0": all interfaces — lets any machine on the network talk to
+          Ollama directly on port 11434, bypassing the agent entirely. Useful
+          when you want to point a remote client (LM Studio, Open WebUI, another
+          nyxorn host, etc.) straight at this machine's models.
+
+        Remember to also set ollama.openFirewall = true, or open port 11434
+        manually, otherwise the kernel will drop inbound connections even when
+        Ollama is bound to 0.0.0.0.
+      '';
+    };
+
+    ollama.openFirewall = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Open port 11434 (TCP) in the NixOS firewall so remote machines can reach
+        Ollama. Has no effect unless ollama.host is set to a non-loopback address
+        such as "0.0.0.0". Defaults to false so the API is not accidentally
+        exposed on loopback-only setups.
+      '';
+    };
+
     enableSearxng = mkOption {
       type = types.bool;
       default = false;
@@ -706,7 +735,10 @@ in
       # see `ollamaPackage` above). nixos-26.05 removed services.ollama.acceleration,
       # so the old `acceleration = ...` line was dropped.
       package = cfg.ollama.package;
+      host    = cfg.ollama.host;
     };
+
+    networking.firewall.allowedTCPPorts = mkIf (cfg.ollama.enable && cfg.ollama.openFirewall) [ 11434 ];
 
     # Engine-agnostic model pre-pull. Runs once after Ollama is up and pulls
     # any tags the user listed in services.aiAgent.prePullModels that aren't
@@ -729,7 +761,7 @@ in
         RemainAfterExit = true;
         Environment = [
           "HOME=${nyxornHome}"
-          "OLLAMA_HOST=http://127.0.0.1:11434"
+          "OLLAMA_HOST=http://${cfg.ollama.host}:11434"
         ];
       };
 
@@ -972,6 +1004,11 @@ in
         errorsCmd        = if isHermes then "sudo journalctl -u hermes-agent -p err -f"   else "sudo tail -f /var/log/nyxorn/openclaw-error.log";
         journalUnits     = (if cfg.ollama.enable then "ollama " else "") + agentService;
         statusUnits      = (if cfg.ollama.enable then "ollama " else "") + agentService;
+
+        # Runs ollama as the nyxorn-agent user with the same HOME and
+        # OLLAMA_HOST the services use, so `nyxorn-ollama pull`, `--version`,
+        # `ps`, `list`, etc. all operate against nyxorn's local instance.
+        ollamaCmd        = "sudo -u nyxorn-agent env HOME=${nyxornHome} OLLAMA_HOST=http://${cfg.ollama.host}:11434 ${cfg.ollama.package}/bin/ollama";
       in
       {
         nyxorn          = nyxornCmd;
@@ -984,6 +1021,8 @@ in
         nyxorn-stop     = "sudo systemctl stop ${agentService}";
         nyxorn-start    = "sudo systemctl start ${agentService}";
         nyxorn-status   = "systemctl status ${statusUnits}";
+      } // optionalAttrs cfg.ollama.enable {
+        nyxorn-ollama   = ollamaCmd;
       };
 
     services.logrotate = mkIf isOpenclaw {
