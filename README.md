@@ -220,12 +220,10 @@ Nyxorn carries **two nixpkgs snapshots** and you choose which one Ollama is pull
 services.aiAgent.ollama.channel = "master";
 ```
 
-That's it. Rebuild and Ollama will come from nixpkgs master, which always has the
-latest packaged release.
+### Keep both snapshots current (user side)
 
-### Keep both snapshots current
-
-Both `nixpkgs` (unstable) and `nixpkgs-master` are updated together when you run:
+After the nyxorn maintainer bumps the pins (see below), pull the update into your
+system config:
 
 ```bash
 # In your system dotfiles repo
@@ -233,6 +231,30 @@ nix flake update nyxorn
 sudo nixos-rebuild switch --flake .#yourhost
 sudo systemctl restart ollama
 ```
+
+### Bump the nixpkgs-master pin (nyxorn maintainer task)
+
+The `nixpkgs-master` pin lives in **this repo's** `flake.lock`. When that pin is
+stale, every user on `ollama.channel = "master"` gets an old Ollama version even
+after running `nix flake update nyxorn` — because the pin they pull is whatever
+was last committed here.
+
+**Whenever a new Ollama version lands in nixpkgs master, update the pin here and push:**
+
+```bash
+# In the nyxorn repo
+nix flake update nixpkgs-master
+git add flake.lock
+git commit -m "flake: bump nixpkgs-master"
+git push
+```
+
+Users then get the new Ollama on their next `nix flake update nyxorn && nixos-rebuild switch`.
+
+> **Do not** confuse `nixpkgs-master` (the raw source snapshot used for Ollama) with
+> `nixpkgs` (nixpkgs-unstable, used for everything else). Only `nixpkgs-master` needs
+> bumping for Ollama updates; running bare `nix flake update` bumps all inputs and may
+> pull in unrelated nixpkgs-unstable changes you haven't reviewed.
 
 ### Tie Ollama to your system's nixpkgs (optional)
 

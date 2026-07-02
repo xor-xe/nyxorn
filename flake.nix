@@ -8,8 +8,16 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     # Raw nixpkgs master source used when services.aiAgent.ollama.channel = "master".
+    # Raw nixpkgs master snapshot used when services.aiAgent.ollama.channel = "master".
     # Fetched as a plain source tree (flake = false) so it can be imported with
     # allowUnfree without needing a separate nixpkgs flake evaluation.
+    #
+    # MAINTAINER NOTE: this pin must be bumped manually whenever a new Ollama
+    # version lands in nixpkgs master, so users on ollama.channel = "master" get
+    # the latest build after their next `nix flake update nyxorn`.
+    #
+    #   nix flake update nixpkgs-master
+    #   git add flake.lock && git commit -m "flake: bump nixpkgs-master" && git push
     nixpkgs-master = {
       url = "github:NixOS/nixpkgs/master";
       flake = false;
