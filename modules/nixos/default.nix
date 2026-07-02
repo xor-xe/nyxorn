@@ -37,7 +37,7 @@ let
     unzip
     python3
     nodejs
-    nodePackages.pnpm
+    pnpm
     jq
   ];
 
@@ -702,8 +702,10 @@ in
 
     services.ollama = mkIf cfg.ollama.enable {
       enable = true;
+      # GPU backend is selected purely via the package (ollama-cuda/-rocm/-vulkan,
+      # see `ollamaPackage` above). nixos-26.05 removed services.ollama.acceleration,
+      # so the old `acceleration = ...` line was dropped.
       package = cfg.ollama.package;
-      acceleration = lib.mkIf (cfg.gpuAcceleration != "cpu") cfg.gpuAcceleration;
     };
 
     # Engine-agnostic model pre-pull. Runs once after Ollama is up and pulls
