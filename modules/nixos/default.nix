@@ -95,8 +95,11 @@ let
 
     ${optionalString cfg.ollama.enable ''
     hdr "Ollama"
-    if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-      ok "Ollama API reachable"
+    ollama_ver=$(ollama --version 2>/dev/null || echo "unknown")
+    ok "package version: $ollama_ver (channel: ${cfg.ollama.channel})"
+    ok "listen host: ${cfg.ollama.host}  openFirewall: ${if cfg.ollama.openFirewall then "true" else "false"}"
+    if curl -sf http://${cfg.ollama.host}:11434/api/tags > /dev/null 2>&1; then
+      ok "Ollama API reachable at http://${cfg.ollama.host}:11434"
       echo -e "\n  Loaded models:"
       sudo -u nyxorn-agent env HOME=${nyxornHome} ollama ps 2>/dev/null \
         | sed 's/^/    /' || warn "Could not list loaded models"
@@ -104,7 +107,7 @@ let
       sudo -u nyxorn-agent env HOME=${nyxornHome} ollama list 2>/dev/null \
         | sed 's/^/    /' || warn "Could not list models"
     else
-      fail "Ollama API not reachable at http://localhost:11434"
+      fail "Ollama API not reachable at http://${cfg.ollama.host}:11434"
     fi
     ''}
 
